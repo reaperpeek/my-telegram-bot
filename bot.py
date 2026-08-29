@@ -11,8 +11,6 @@ from telegram.ext import (
 )
 
 TOKEN = "8408315552:AAG5CczuITP2tJnNdMlCnRPXnvXoM6-xSUA"
-
-# ⚠️ ТВОЙ TELEGRAM ID ДЛЯ ПОЛУЧЕНИЯ ЗАЯВОК И ЖАЛОБ
 ADMIN_ID = 7786483533
 
 ALL_SERVICES = {
@@ -33,7 +31,6 @@ ALL_SERVICES = {
 def init_db():
     conn = sqlite3.connect("dossier_database.db")
     cursor = conn.cursor()
-    # Таблица досье
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS dossiers (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -44,7 +41,6 @@ def init_db():
             notes TEXT
         )
     ''')
-    # Таблица очереди модерации
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS pending_add (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -153,15 +149,15 @@ async def post_init(application) -> None:
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     welcome_text = (
-        f"🕵️‍♂️ **SCOUTrr — Народная OSINT-База**\n\n"
+        f"🕵️‍♂️ <b>SCOUTrr — Народная OSINT-База</b>\n\n"
         f"Добро пожаловать в коллективный Центр Поиска Данных! 🌐\n\n"
-        f"• **🔍 Искать человека** — отправь номер, @username или ФИО.\n"
-        f"• **➕ Добавить человека** — отправить данные на проверку.\n\n"
-        f"🆔 **Твой TG ID:** `{user.id}`"
+        f"• <b>🔍 Искать человека</b> — отправь номер, @username или ФИО.\n"
+        f"• <b>➕ Добавить человека</b> — отправить данные на проверку.\n\n"
+        f"🆔 <b>Твой TG ID:</b> <code>{user.id}</code>"
     )
-    await update.message.reply_text(welcome_text, parse_mode="Markdown", reply_markup=get_bottom_keyboard())
+    await update.message.reply_text(welcome_text, parse_mode="HTML", reply_markup=get_bottom_keyboard())
 
-# --- ДОБАВЛЕНИЕ (ОТПРАВКА НА ПРЕМОДЕРАЦИЮ) ---
+# --- ДОБАВЛЕНИЕ С ПРЕМОДЕРАЦИЕЙ ---
 async def add_dossier_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     full_text = update.message.text
@@ -170,12 +166,12 @@ async def add_dossier_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not full_text or "|" not in full_text:
         await update.message.reply_text(
-            "⚠️ **Ошибка формата!**\n\n"
-            "Отправь данные в одну строчку через разделитель `|`:\n"
-            "`/add НОМЕР | ФИО | ТЕЛЕФОН | ЮЗЕРНЕЙМ | ИНФОРМАЦИЯ`\n\n"
-            "💡 **Пример:**\n"
-            "`/add +380991234567 | Иванов Иван | +380991234567 | @vanya | ДР: 15.05.2005. Город: Киев.`",
-            parse_mode="Markdown"
+            "⚠️ <b>Ошибка формата!</b>\n\n"
+            "Отправь данные в одну строчку через разделитель <code>|</code>:\n"
+            "<code>/add НОМЕР | ФИО | ТЕЛЕФОН | ЮЗЕРНЕЙМ | ИНФОРМАЦИЯ</code>\n\n"
+            "💡 <b>Пример:</b>\n"
+            "<code>/add +380991234567 | Иванов Иван | +380991234567 | @vanya | ДР: 15.05.2005. Город: Киев.</code>",
+            parse_mode="HTML"
         )
         return
 
@@ -187,16 +183,14 @@ async def add_dossier_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     username = parts[3] if len(parts) > 3 else "Не указано"
     notes = " | ".join(parts[4:]) if len(parts) > 4 else "Нет заметок"
 
-    # Сохраняем в заявки
     pending_id = save_pending(user.id, search_key, full_name, phone, username, notes)
 
     await update.message.reply_text(
-        "⏳ **Заявка отправлена модератору!**\n"
+        "⏳ <b>Заявка отправлена модератору!</b>\n"
         "После проверки администратором данные будут добавлены в общую базу.",
-        parse_mode="Markdown"
+        parse_mode="HTML"
     )
 
-    # Отправляем сообщение АДМИНУ с кнопками
     admin_markup = InlineKeyboardMarkup([
         [
             InlineKeyboardButton("✅ Одобрить", callback_data=f"approve_{pending_id}"),
@@ -204,40 +198,45 @@ async def add_dossier_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
     ])
 
-    await context.bot.send_message(
-        chat_id=ADMIN_ID,
-        text=(
-            f"📥 **Новая заявка на добавление!**\n"
-            f"От: [{user.first_name}](tg://user?id={user.id}) (`{user.id}`)\n\n"
-            f"[+] **Номер/Ключ:** `{search_key}`\n"
-            f"[+] **ФИО:** {full_name}\n"
-            f"[+] **Телефон:** {phone}\n"
-            f"[+] **Юзернейм:** {username}\n"
-            f"[+] **Заметки:** {notes}"
-        ),
-        parse_mode="Markdown",
-        reply_markup=admin_markup
-    )
+    user_tg = f"@{user.username}" if user.username else f"ID: {user.id}"
+
+    try:
+        await context.bot.send_message(
+            chat_id=ADMIN_ID,
+            text=(
+                f"📥 <b>Новая заявка на добавление!</b>\n"
+                f"От: {user_tg} (ID: <code>{user.id}</code>)\n\n"
+                f"[+] <b>Номер/Ключ:</b> <code>{search_key}</code>\n"
+                f"[+] <b>ФИО:</b> {full_name}\n"
+                f"[+] <b>Телефон:</b> {phone}\n"
+                f"[+] <b>Юзернейм:</b> {username}\n"
+                f"[+] <b>Заметки:</b> {notes}"
+            ),
+            parse_mode="HTML",
+            reply_markup=admin_markup
+        )
+    except Exception as e:
+        print(f"Ошибка при отправке заявки админу: {e}")
 
 # --- УДАЛЕНИЕ (АДМИН) ---
 async def del_dossier_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id != ADMIN_ID:
-        await update.message.reply_text("⛔ **У вас нет прав на удаление записей!**", parse_mode="Markdown")
+        await update.message.reply_text("⛔ <b>У вас нет прав на удаление записей!</b>", parse_mode="HTML")
         return
 
     key = update.message.text.partition(' ')[2].strip()
     if not key:
-        await update.message.reply_text("⚠️ Укажите номер для удаления: `/del +380xxxxxxxxx`", parse_mode="Markdown")
+        await update.message.reply_text("⚠️ Укажите номер для удаления: <code>/del +380xxxxxxxxx</code>", parse_mode="HTML")
         return
 
     deleted = delete_from_db_by_key(key)
     if deleted > 0:
-        await update.message.reply_text(f"🗑 Запись по номеру `{key}` удалена из базы!", parse_mode="Markdown")
+        await update.message.reply_text(f"🗑 Запись по номеру <code>{key}</code> удалена из базы!", parse_mode="HTML")
     else:
-        await update.message.reply_text(f"❓ Запись `{key}` не найдена.", parse_mode="Markdown")
+        await update.message.reply_text(f"❓ Запись <code>{key}</code> не найдена.", parse_mode="HTML")
 
-# --- ПОИСК И СБОР ИНФОРМАЦИИ ---
+# --- ПОИСК ---
 async def handle_user_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     raw_input = update.message.text.strip()
 
@@ -246,21 +245,21 @@ async def handle_user_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     elif "➕ Добавить человека" in raw_input:
         instruction = (
-            "➕ **Как предложить запись в базу:**\n\n"
+            "➕ <b>Как предложить запись в базу:</b>\n\n"
             "Скопируй шаблон, заполни данные и отправь боту одной строкой:\n\n"
-            "`/add НОМЕР | ФИО | ТЕЛЕФОН | ЮЗЕРНЕЙМ | ИНФОРМАЦИЯ`\n\n"
+            "<code>/add НОМЕР | ФИО | ТЕЛЕФОН | ЮЗЕРНЕЙМ | ИНФОРМАЦИЯ</code>\n\n"
             "💡 Заявка уйдёт администратору на модерацию и после проверки появится в базе!"
         )
-        await update.message.reply_text(instruction, parse_mode="Markdown")
+        await update.message.reply_text(instruction, parse_mode="HTML")
         return
     elif "📖 Инструкция" in raw_input or raw_input == "/help":
         await start(update, context)
         return
     elif "ℹ️ Мой Баланс" in raw_input:
-        await update.message.reply_text("📊 **Ваш баланс:** Безлимитный доступ.", parse_mode="Markdown")
+        await update.message.reply_text("📊 <b>Ваш баланс:</b> Безлимитный доступ.", parse_mode="HTML")
         return
 
-    status_msg = await update.message.reply_text(f"🔎 **Сбор информации по запросу:** `{raw_input}`...", parse_mode="Markdown")
+    status_msg = await update.message.reply_text(f"🔎 <b>Сбор информации по запросу:</b> <code>{raw_input}</code>...", parse_mode="HTML")
 
     db_matches = search_in_db(raw_input)
     
@@ -288,7 +287,7 @@ async def handle_user_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if not first_record_id:
                 first_record_id = rec_id
             
-            output.append(f"🕵️‍♂️ **Результат из Народной Базы:**")
+            output.append(f"🕵️‍♂️ <b>Результат из Народной Базы:</b>")
             output.append(f"[+] Ф И О : {full_name}")
             output.append(f"[+] Н о м е р : {phone}")
             output.append(f"[+] Ю з е р н е й м : @{username}")
@@ -300,7 +299,7 @@ async def handle_user_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 output.append(f"[+] {line}")
             output.append("")
     else:
-        output.append(f"📁 **Народная база:** Запись не найдена.")
+        output.append(f"📁 <b>Народная база:</b> Запись не найдена.")
         if phone_info:
             output.append(phone_info.strip())
         output.append("")
@@ -329,27 +328,25 @@ async def handle_user_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
 
     if social_results:
-        output.append("🌐 **Найденные Соцсети:**")
+        output.append("🌐 <b>Найденные Соцсети:</b>")
         output.extend(social_results)
 
     final_text = "\n".join(output)
     
-    # Кнопка жалобы под результатами
     reply_markup = None
     if first_record_id:
         reply_markup = InlineKeyboardMarkup([
             [InlineKeyboardButton("⚠️ Пожаловаться на запись", callback_data=f"report_{first_record_id}")]
         ])
 
-    await status_msg.edit_text(final_text, parse_mode="Markdown", disable_web_page_preview=True, reply_markup=reply_markup)
+    await status_msg.edit_text(final_text, parse_mode="HTML", disable_web_page_preview=True, reply_markup=reply_markup)
 
-# --- ОБРАБОТКА НАЖАТИЙ КНОПОК МОДЕРАЦИИ И ЖАЛОБ ---
+# --- ОБРАБОТКА НАЖАТИЙ КНОПОК ---
 async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     data = query.data
     await query.answer()
 
-    # Админ одобрил заявку
     if data.startswith("approve_"):
         pending_id = int(data.split("_")[1])
         item = get_pending_by_id(pending_id)
@@ -358,28 +355,26 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             add_to_db(search_key, full_name, phone, username, notes)
             delete_pending(pending_id)
 
-            await query.edit_message_text(f"{query.message.text}\n\n✅ **ОДОБРЕНО И ДОБАВЛЕНО В БАЗУ**", parse_mode="Markdown")
+            await query.edit_message_text(f"{query.message.text}\n\n✅ <b>ОДОБРЕНО И ДОБАВЛЕНО В БАЗУ</b>", parse_mode="HTML")
             
-            # Уведомляем автора
             try:
                 await context.bot.send_message(
                     chat_id=user_id,
-                    text=f"🎉 **Ваша запись по номеру `{search_key}` прошла модерацию и добавлена в общую базу!**",
-                    parse_mode="Markdown"
+                    text=f"🎉 <b>Ваша запись по номеру <code>{search_key}</code> прошла модерацию и добавлена в базу!</b>",
+                    parse_mode="HTML"
                 )
             except Exception:
                 pass
         else:
             await query.edit_message_text("⚠️ Заявка уже обработана.")
 
-    # Админ отклонил заявку
     elif data.startswith("reject_"):
         pending_id = int(data.split("_")[1])
         item = get_pending_by_id(pending_id)
         if item:
             user_id = item[0]
             delete_pending(pending_id)
-            await query.edit_message_text(f"{query.message.text}\n\n❌ **ОТКЛОНЕНО**", parse_mode="Markdown")
+            await query.edit_message_text(f"{query.message.text}\n\n❌ <b>ОТКЛОНЕНО</b>", parse_mode="HTML")
             try:
                 await context.bot.send_message(
                     chat_id=user_id,
@@ -388,7 +383,6 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             except Exception:
                 pass
 
-    # Пользователь нажал "Пожаловаться"
     elif data.startswith("report_"):
         rec_id = int(data.split("_")[1])
         user = query.from_user
@@ -396,30 +390,30 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         await query.edit_message_reply_markup(reply_markup=None)
         await context.bot.send_message(
             chat_id=query.message.chat_id,
-            text="🚨 **Спасибо! Жалоба отправлена модераторам.**"
+            text="🚨 <b>Спасибо! Жалоба отправлена модераторам.</b>",
+            parse_mode="HTML"
         )
 
-        # Пересылаем админу
         admin_del_markup = InlineKeyboardMarkup([
             [InlineKeyboardButton("🗑 Удалить эту запись из БД", callback_data=f"adm_del_{rec_id}")]
         ])
+        user_tg = f"@{user.username}" if user.username else f"ID: {user.id}"
         await context.bot.send_message(
             chat_id=ADMIN_ID,
             text=(
-                f"⚠️ **ПОСТУПИЛА ЖАЛОБА НА ЗАПИСЬ (ID: {rec_id})!**\n"
-                f"От пользователя: [{user.first_name}](tg://user?id={user.id}) (`{user.id}`)\n\n"
-                f"Текст поиска:\n{query.message.text}"
+                f"⚠️ <b>ПОСТУПИЛА ЖАЛОБА НА ЗАПИСЬ (ID: {rec_id})!</b>\n"
+                f"От пользователя: {user_tg}\n\n"
+                f"Текст карточки:\n{query.message.text}"
             ),
-            parse_mode="Markdown",
+            parse_mode="HTML",
             reply_markup=admin_del_markup
         )
 
-    # Админ жмёт "Удалить" по жалобе
     elif data.startswith("adm_del_"):
         rec_id = int(data.split("_")[1])
         rows = delete_from_db_by_id(rec_id)
         if rows > 0:
-            await query.edit_message_text(f"{query.message.text}\n\n🗑 **ЗАПИСЬ УСПЕШНО УДАЛЕНА ИЗ БАЗЫ!**", parse_mode="Markdown")
+            await query.edit_message_text(f"{query.message.text}\n\n🗑 <b>ЗАПИСЬ УСПЕШНО УДАЛЕНА ИЗ БАЗЫ!</b>", parse_mode="HTML")
         else:
             await query.edit_message_text("❓ Запись уже была удалена ранее.")
 
@@ -434,5 +428,5 @@ if __name__ == '__main__':
     app.add_handler(CallbackQueryHandler(handle_callback_query))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_user_query))
     
-    print("🤖 Бот запущен с премодерацией и системой жалоб!")
+    print("🤖 Бот запущен!")
     app.run_polling()
