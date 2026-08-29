@@ -16,7 +16,7 @@ from telegram.ext import (
 )
 
 # 🔑 Настройки бота (укажи свой актуальный токен от BotFather)
-TOKEN = "ВСТАВЬ_СЮДА_НОВЫЙ_ТОКЕН_ИЗ_BOTFATHER"
+TOKEN = "8408315552:AAGEddPKNCHCas4A-x_m74-VwtItVpMrZZc"
 ADMIN_ID = 7786483533
 
 # --- База данных SQLite ---
