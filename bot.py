@@ -14,7 +14,7 @@ from telegram.ext import (
     CallbackQueryHandler, PreCheckoutQueryHandler, filters, ContextTypes
 )
 
-# 🔑 Обновлённый токен
+# 🔑 Токен бота
 TOKEN = "8408315552:AAEocZg8vBuLDXi3ZrDn6z_7pnfHkYXKuac"
 ADMIN_ID = 7786483533
 REFS_NEEDED = 5
@@ -455,18 +455,20 @@ async def handle_user_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     output = []
     clean_tg_input = raw_input.replace("@", "").replace("tgid", "").strip()
 
-    # 1. Поиск в Telegram
+    # 1. Поиск в Telegram + Определение даты создания
+    tg_found = False
     if clean_tg_input.isdigit() and 5 <= len(clean_tg_input) <= 12:
         tg_id_num = int(clean_tg_input)
         created_date = estimate_tg_creation_date(tg_id_num)
         output.append("📱 <b>TELEGRAM ПОЛЬЗОВАТЕЛЬ:</b>")
         output.append(f"🆔 <b>ID:</b> <code>{tg_id_num}</code>")
-        output.append(f"📅 <b>Создан:</b> {created_date}\n")
+        output.append(f"📅 <b>Дата создания:</b> {created_date}\n")
+        tg_found = True
     else:
         try:
             tg_username = f"@{clean_tg_input}"
             chat_info = await context.bot.get_chat(tg_username)
-            if chat_info and chat_info.id:
+            if chat_info:
                 tg_id_num = chat_info.id
                 created_date = estimate_tg_creation_date(tg_id_num)
                 output.append("📱 <b>TELEGRAM ПОЛЬЗОВАТЕЛЬ:</b>")
@@ -475,7 +477,8 @@ async def handle_user_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     name_str = chat_info.first_name + (f" {chat_info.last_name}" if chat_info.last_name else "")
                     output.append(f"👤 <b>Имя:</b> {name_str}")
                 output.append(f"🔗 <b>Username:</b> @{clean_tg_input}")
-                output.append(f"📅 <b>Создан:</b> {created_date}\n")
+                output.append(f"📅 <b>Дата создания:</b> {created_date}\n")
+                tg_found = True
         except Exception:
             pass
 
