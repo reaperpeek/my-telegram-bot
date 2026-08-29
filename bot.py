@@ -215,9 +215,10 @@ async def successful_payment_callback(update: Update, context: ContextTypes.DEFA
     # Сообщение пользователю
     await update.message.reply_text(
         "🎉 <b>Оплата 10 ⭐ успешно получена!</b>\n\n"
-        "📩 **Отправьте прямо сюда в чат вводные данные для поиска**:\n"
+        "📩 <b>Отправьте прямо сюда в чат вводные данные для поиска:</b>\n"
         "• Номер телефона / Telegram ID / @username / ФИО / Email / Госномер.\n\n"
-        "Ваша заявка принята! Администратор обработает запрос и отправит вам расширенный отчёт в личные сообщения.",
+        "⏳ <b>Время формирования отчёта:</b> от 30 минут до 3 часов.\n"
+        "<i>Специалист уже принял ваш запрос в работу и пришлёт готовый Deep Search отчёт прямо в этот чат или в личные сообщения!</i>",
         parse_mode="HTML"
     )
 
@@ -229,7 +230,7 @@ async def successful_payment_callback(update: Update, context: ContextTypes.DEFA
                 f"🚨 <b>НОВЫЙ ОПЛАЧЕННЫЙ ЗАКАЗ DEEP SEARCH!</b>\n\n"
                 f"👤 <b>Покупатель:</b> {user_tg} (ID: <code>{user.id}</code>)\n"
                 f"💰 <b>Сумма:</b> 10 ⭐ (Telegram Stars)\n\n"
-                f"📥 Ожидайте от него вводные данные и отправьте ему готовое досье!"
+                f"📥 Ожидайте от него вводные данные. У вас есть до 3 часов на выдачу отчёта!"
             ),
             parse_mode="HTML"
         )
@@ -424,7 +425,6 @@ async def handle_user_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if first_record_id:
         inline_buttons.append([InlineKeyboardButton("⚠️ Пожаловаться на запись", callback_data=f"report_{first_record_id}")])
     
-    # Кнопка быстрой покупки Deep Search прямо под каждым поиском!
     inline_buttons.append([InlineKeyboardButton("⚡ Заказать глубокий Deep Search (10 ⭐)", callback_data="buy_deep_search")])
 
     reply_markup = InlineKeyboardMarkup(inline_buttons)
