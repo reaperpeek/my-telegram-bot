@@ -20,9 +20,8 @@ TOKEN = "8408315552:AAFswxkq2cabG-xpUUUsF1iCl3co4E0yXjo"
 ADMIN_ID = 7786483533
 
 WAITING_PERSON_DATA = 1
-REFS_NEEDED = 5  # Нужно пригласить 5 человек за 1 Deep Search
+REFS_NEEDED = 5
 
-# --- База данных SQLite ---
 def init_db():
     conn = sqlite3.connect("bot_base.db")
     cursor = conn.cursor()
@@ -48,7 +47,6 @@ def init_db():
         )
     """)
     
-    # Автоматическое добавление новых колонок, если база уже существовала старой версии
     cursor.execute("PRAGMA table_info(osint_base)")
     columns = [column[1] for column in cursor.fetchall()]
     if "fio" not in columns:
@@ -56,19 +54,9 @@ def init_db():
     if "birth_date" not in columns:
         cursor.execute("ALTER TABLE osint_base ADD COLUMN birth_date TEXT")
 
-    # --- НАЧАЛЬНЫЙ СПИСОК ДЛЯ АВТОЗАГРУЗКИ ---
-    # Формат: (target_id, username, phone, fio, birth_date, info)
-    initial_people = [
-        ("987654321", "anastasiia_riii", "+79000000000", "Анастасия", "15.08.1998", "Запись из локальной базы"),
-    ]
-    
-    for t_id, uname, ph, fio_val, dob_val, inf in initial_people:
-        clean_u = uname.replace("@", "").strip() if uname else ""
-        cursor.execute(
-            "INSERT OR IGNORE INTO osint_base (target_id, username, phone, fio, birth_date, info, status) VALUES (?, ?, ?, ?, ?, ?, 'approved')",
-            (t_id, clean_u, ph, fio_val, dob_val, inf)
-        )
-        
+    # Чистим старые тестовые фейковые записи при перезапуске
+    cursor.execute("DELETE FROM osint_base WHERE phone = '+79000000000' OR fio = 'Анастасия'")
+
     conn.commit()
     conn.close()
 
@@ -121,7 +109,7 @@ def search_in_local_db(query):
     cursor = conn.cursor()
     clean_q = query.replace("@", "").strip()
     cursor.execute(
-        "SELECT target_id, username, phone, fio, birth_date, info FROM osint_base WHERE (username = ? OR target_id = ? OR phone = ?) AND status = 'approved'", 
+        "SELECT target_id, username, phone, fio, birth_date, info FROM osint_base WHERE (username = ? OR target_id = ? OR phone = ?) AND status = 'approved' ORDER BY id DESC", 
         (clean_q, clean_q, clean_q)
     )
     res = cursor.fetchone()
@@ -132,6 +120,13 @@ def add_to_osint_base(target_id, username, phone, fio, birth_date, info):
     conn = sqlite3.connect("bot_base.db")
     cursor = conn.cursor()
     clean_user = username.replace("@", "").strip() if username else ""
+    
+    # Удаляем старые записи по этому юзернейму/телефону перед вставкой новой
+    if clean_user:
+        cursor.execute("DELETE FROM osint_base WHERE username = ?", (clean_user,))
+    if phone:
+        cursor.execute("DELETE FROM osint_base WHERE phone = ?", (phone,))
+        
     cursor.execute(
         "INSERT INTO osint_base (target_id, username, phone, fio, birth_date, info, status) VALUES (?, ?, ?, ?, ?, ?, 'approved')",
         (target_id, clean_user, phone, fio, birth_date, info)
@@ -139,7 +134,6 @@ def add_to_osint_base(target_id, username, phone, fio, birth_date, info):
     conn.commit()
     conn.close()
 
-# --- Форматирование красивой карточки ---
 def format_local_profile(target_id, username, phone, fio, birth_date, info):
     clean_fio = fio.strip() if fio else "<i>Не указано</i>"
     clean_dob = birth_date.strip() if birth_date else "<i>Не указана</i>"
@@ -195,7 +189,6 @@ async def check_username_via_tgstat(username: str):
             pass
     return None
 
-# --- Обработчики команд ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     args = context.args
@@ -223,7 +216,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(msg, parse_mode="HTML", reply_markup=reply_markup)
 
-# АДМИН-КОМАНДЫ
 async def get_users_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
@@ -239,7 +231,6 @@ async def export_db_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if os.path.exists("bot_base.db"):
         await update.message.reply_document(document=open("bot_base.db", "rb"), caption="💾 База данных")
 
-# Обработка Deep Search
 async def handle_deep_search_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     searches, refs = get_user_stats(user_id)
@@ -269,7 +260,6 @@ async def handle_deep_search_click(update: Update, context: ContextTypes.DEFAULT
             parse_mode="HTML"
         )
 
-# Покупка через Stars
 async def buy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -305,7 +295,6 @@ async def successful_payment_callback(update: Update, context: ContextTypes.DEFA
         parse_mode="HTML"
     )
 
-# Добавление на модерацию
 async def start_add_person(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "📝 <b>Отправь данные человека для добавления в базу:</b>\n\n"
@@ -346,7 +335,6 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     info_text = context.bot_data.get(pending_key, "")
 
     if action == "approve":
-        # Умный извлекатель данных из текста
         target_id = re.search(r'(?:ID:?|id:?|\b)\s*(\d{7,11})\b', info_text)
         username = re.search(r'@([a-zA-Z0-9_]{5,32})', info_text)
         phone = re.search(r'\+?\d{10,15}', info_text)
@@ -368,7 +356,6 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await query.edit_message_text(f"❌ <b>Заявка отклонена.</b>\n\n{info_text}", parse_mode="HTML")
 
-# Поиск
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     user_id = update.effective_user.id
@@ -395,7 +382,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # Поиск по номеру
     if re.match(r'^\+?\d{10,15}$', text):
         local = search_in_local_db(text)
         phone_info = check_phone(text)
@@ -407,7 +393,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(res, parse_mode="HTML")
         return
 
-    # Поиск по юзернейму
     if text.startswith("@") or re.match(r'^[a-zA-Z0-9_]{5,32}$', text):
         username = text if text.startswith("@") else f"@{text}"
         clean_name = username.replace("@", "")
