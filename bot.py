@@ -15,7 +15,7 @@ from telegram.ext import (
     CallbackQueryHandler, ContextTypes, ConversationHandler, filters
 )
 
-TOKEN = "ВСТАВЬ_СЮДА_СВОЙ_ТОКЕН"
+TOKEN = "8408315552:AAH-tDeJVoGgnNGCl00FUkgW-_88ejRZcjI"
 ADMIN_ID = 7786483533
 
 WAITING_PERSON_DATA = 1
