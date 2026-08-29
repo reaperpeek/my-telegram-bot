@@ -73,12 +73,6 @@ def search_in_db(query_text: str):
 def add_to_db(search_key: str, full_name: str, phone: str, username: str, notes: str):
     clean_key = search_key.lower().replace("+", "").replace("@", "").strip()
     clean_user = username.replace("@", "").strip()
-    
-    # Бот автоматически добавляет пометку о возможной смене данных, если её еще нет
-    warning_tag = "⚠️ Юзернейм и данные могут меняться"
-    if warning_tag not in notes:
-        notes = f"{notes} | {warning_tag}" if notes else warning_tag
-
     conn = sqlite3.connect("dossier_database.db")
     cursor = conn.cursor()
     cursor.execute('''
@@ -244,7 +238,7 @@ async def del_dossier_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text(f"❓ Запись <code>{key}</code> не найдена.", parse_mode="HTML")
 
-# --- ПОИСК ---
+# --- ПОИСК И ВЫВОД КАРТОЧКИ ---
 async def handle_user_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     raw_input = update.message.text.strip()
 
@@ -340,6 +334,10 @@ async def handle_user_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if social_results:
         output.append("🌐 <b>Найденные Соцсети:</b>")
         output.extend(social_results)
+        output.append("")
+
+    # ⚠️ АВТОМАТИЧЕСКАЯ ПОМЕТКА О ВОЗМОЖНОЙ СМЕНЕ ЮЗЕРНЕЙМА/ДАННЫХ ПРИ КАЖДОМ ПОИСКЕ
+    output.append("⚠️ <b>Примечание:</b> Юзернеймы и контактные данные пользователей могут со временем меняться!")
 
     final_text = "\n".join(output)
     
