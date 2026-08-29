@@ -72,12 +72,13 @@ def search_in_db(query_text: str):
 
 def add_to_db(search_key: str, full_name: str, phone: str, username: str, notes: str):
     clean_key = search_key.lower().replace("+", "").replace("@", "").strip()
+    clean_user = username.replace("@", "").strip()
     conn = sqlite3.connect("dossier_database.db")
     cursor = conn.cursor()
     cursor.execute('''
         INSERT OR REPLACE INTO dossiers (search_key, full_name, phone, username, notes)
         VALUES (?, ?, ?, ?, ?)
-    ''', (clean_key, full_name, phone, username, notes))
+    ''', (clean_key, full_name, phone, clean_user, notes))
     conn.commit()
     conn.close()
 
@@ -102,12 +103,13 @@ def delete_from_db_by_key(search_key: str):
 
 def save_pending(user_id: int, search_key: str, full_name: str, phone: str, username: str, notes: str):
     clean_key = search_key.lower().replace("+", "").replace("@", "").strip()
+    clean_user = username.replace("@", "").strip()
     conn = sqlite3.connect("dossier_database.db")
     cursor = conn.cursor()
     cursor.execute('''
         INSERT INTO pending_add (user_id, search_key, full_name, phone, username, notes)
         VALUES (?, ?, ?, ?, ?, ?)
-    ''', (user_id, clean_key, full_name, phone, username, notes))
+    ''', (user_id, clean_key, full_name, phone, clean_user, notes))
     pending_id = cursor.lastrowid
     conn.commit()
     conn.close()
@@ -287,14 +289,17 @@ async def handle_user_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if not first_record_id:
                 first_record_id = rec_id
             
+            clean_user_display = username.lstrip("@") if username else "Не указан"
+            
             output.append(f"🕵️‍♂️ <b>Результат из Народной Базы:</b>")
             output.append(f"[+] Ф И О : {full_name}")
             output.append(f"[+] Н о м е р : {phone}")
-            output.append(f"[+] Ю з е р н е й м : @{username}")
+            output.append(f"[+] Ю з е р н е й м : @{clean_user_display}")
             if phone_info:
                 output.append(phone_info.strip())
             
-            notes_lines = [n.strip() for n in notes.split('.') if n.strip()]
+            # Разбиваем только по разделителям "|" или перенос строки, точки в датах остаются целыми
+            notes_lines = [n.strip() for n in re.split(r'\||\n', notes) if n.strip()]
             for line in notes_lines:
                 output.append(f"[+] {line}")
             output.append("")
