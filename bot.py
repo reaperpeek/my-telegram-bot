@@ -1,6 +1,7 @@
 import asyncio
 import re
 import sqlite3
+import time
 import requests
 import phonenumbers
 from phonenumbers import geocoder, carrier
@@ -15,19 +16,13 @@ from telegram.ext import (
 
 TOKEN = "8408315552:AAG5CczuITP2tJnNdMlCnRPXnvXoM6-xSUA"
 ADMIN_ID = 7786483533
+REFS_NEEDED = 5       # Нужно пригласить 5 человек
+TIME_LIMIT_SEC = 3600  # Время на приглашение — 1 час (3600 секунд)
 
 ALL_SERVICES = {
-    "tg": "Telegram",
-    "yt": "YouTube",
-    "tt": "TikTok",
-    "vk": "VK",
-    "pin": "Pinterest",
-    "red": "Reddit",
-    "stm": "Steam",
-    "gh": "GitHub",
-    "tw": "Twitch",
-    "rbl": "Roblox",
-    "hb": "Habr"
+    "tg": "Telegram", "yt": "YouTube", "tt": "TikTok", "vk": "VK",
+    "pin": "Pinterest", "red": "Reddit", "stm": "Steam", "gh": "GitHub",
+    "tw": "Twitch", "rbl": "Roblox", "hb": "Habr"
 }
 
 # --- БАЗА ДАННЫХ ---
@@ -55,6 +50,82 @@ def init_db():
             notes TEXT
         )
     ''')
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            user_id INTEGER PRIMARY KEY,
+            referrer_id INTEGER,
+            ref_count INTEGER DEFAULT 0,
+            ref_start_time INTEGER DEFAULT 0
+        )
+    ''')
+    conn.commit()
+    conn.close()
+
+def get_or_create_user(user_id: int, referrer_id: int = None):
+    conn = sqlite3.connect("dossier_database.db")
+    cursor = conn.cursor()
+    cursor.execute('SELECT user_id, referrer_id FROM users WHERE user_id = ?', (user_id,))
+    row = cursor.fetchone()
+    
+    is_new = False
+    actual_referrer = None
+
+    if not row:
+        is_new = True
+        if referrer_id and referrer_id != user_id:
+            actual_referrer = referrer_id
+        cursor.execute('INSERT INTO users (user_id, referrer_id, ref_count, ref_start_time) VALUES (?, ?, 0, 0)', (user_id, actual_referrer))
+        conn.commit()
+        
+        # Засчитываем реферала только если пригласивший уложился в 1 час!
+        if actual_referrer:
+            cursor.execute('SELECT ref_count, ref_start_time FROM users WHERE user_id = ?', (actual_referrer,))
+            ref_row = cursor.fetchone()
+            if ref_row:
+                ref_count, ref_start_time = ref_row
+                current_time = int(time.time())
+                
+                # Проверка: активен ли таймер (прошло ли меньше 1 часа)
+                if ref_start_time > 0 and (current_time - ref_start_time) <= TIME_LIMIT_SEC:
+                    new_count = ref_count + 1
+                    cursor.execute('UPDATE users SET ref_count = ? WHERE user_id = ?', (new_count, actual_referrer))
+                    conn.commit()
+                else:
+                    actual_referrer = None # Время истекло, не засчитываем
+            
+    conn.close()
+    return is_new, actual_referrer
+
+def start_or_get_ref_campaign(user_id: int):
+    conn = sqlite3.connect("dossier_database.db")
+    cursor = conn.cursor()
+    cursor.execute('SELECT ref_count, ref_start_time FROM users WHERE user_id = ?', (user_id,))
+    row = cursor.fetchone()
+    
+    current_time = int(time.time())
+    
+    if not row:
+        cursor.execute('INSERT INTO users (user_id, ref_count, ref_start_time) VALUES (?, 0, ?)', (user_id, current_time))
+        conn.commit()
+        conn.close()
+        return 0, current_time
+    
+    ref_count, ref_start_time = row
+    
+    # Если таймер не был запущен или с момента старта прошло больше 1 часа — сбрасываем акцию
+    if ref_start_time == 0 or (current_time - ref_start_time) > TIME_LIMIT_SEC:
+        cursor.execute('UPDATE users SET ref_count = 0, ref_start_time = ? WHERE user_id = ?', (current_time, user_id))
+        conn.commit()
+        conn.close()
+        return 0, current_time
+    
+    conn.close()
+    return ref_count, ref_start_time
+
+def reset_user_refs(user_id: int):
+    conn = sqlite3.connect("dossier_database.db")
+    cursor = conn.cursor()
+    cursor.execute('UPDATE users SET ref_count = 0, ref_start_time = 0 WHERE user_id = ?', (user_id,))
     conn.commit()
     conn.close()
 
@@ -137,8 +208,8 @@ def delete_pending(pending_id: int):
 def get_bottom_keyboard():
     keyboard = [
         [KeyboardButton("🔍 Искать человека"), KeyboardButton("➕ Добавить человека")],
-        [KeyboardButton("⚡ Мощный Deep Search (10 ⭐)"), KeyboardButton("📖 Инструкция")],
-        [KeyboardButton("ℹ️ Мой Баланс")]
+        [KeyboardButton("⚡ Мощный Deep Search (10 ⭐)"), KeyboardButton("🔗 Партнёрка")],
+        [KeyboardButton("📖 Инструкция"), KeyboardButton("ℹ️ Мой Баланс")]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
@@ -148,6 +219,7 @@ async def post_init(application) -> None:
         BotCommand("start", "Главное меню"),
         BotCommand("help", "Инструкция"),
         BotCommand("deepsearch", "Заказать глубокий пробив (10 ⭐)"),
+        BotCommand("ref", "Акция: Deep Search за 1 час"),
         BotCommand("add", "Добавить запись на модерацию"),
         BotCommand("del", "Удалить запись (Админ)")
     ]
@@ -155,15 +227,87 @@ async def post_init(application) -> None:
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
+    args = context.args
+    
+    referrer_id = None
+    if args and args[0].startswith("ref_"):
+        try:
+            referrer_id = int(args[0].split("_")[1])
+        except ValueError:
+            pass
+
+    is_new, actual_referrer = get_or_create_user(user.id, referrer_id)
+
+    # Если перешли по ссылки и таймер у пригласившего ещё не истек
+    if is_new and actual_referrer:
+        try:
+            conn = sqlite3.connect("dossier_database.db")
+            cursor = conn.cursor()
+            cursor.execute('SELECT ref_count FROM users WHERE user_id = ?', (actual_referrer,))
+            ref_count = cursor.fetchone()[0]
+            conn.close()
+
+            if ref_count >= REFS_NEEDED:
+                # Цель достигнута! Автоматически даем награду
+                reset_user_refs(actual_referrer)
+                await context.bot.send_message(
+                    chat_id=actual_referrer,
+                    text=(
+                        f"🎉 <b>ПОЗДРАВЛЯЕМ! Цель выполнена!</b>\n\n"
+                        f"Вы успели пригласить {REFS_NEEDED} друзей за 1 час!\n"
+                        f"🎁 Вам начислен <b>Бесплатный Deep Search</b>.\n\n"
+                        f"📩 <i>Отправьте прямо сюда в чат данные для пробива (номер, @username, ФИО и т.д.).</i>"
+                    ),
+                    parse_mode="HTML"
+                )
+            else:
+                await context.bot.send_message(
+                    chat_id=actual_referrer,
+                    text=(
+                        f"⏳ <b>Новый переходи по вашей ссылке!</b>\n"
+                        f"👥 Приглашено: <b>{ref_count} / {REFS_NEEDED}</b>\n"
+                        f"Успейте пригласить остальных, пока не истек 1 час!"
+                    ),
+                    parse_mode="HTML"
+                )
+        except Exception as e:
+            print(f"Ошибка отправки уведомления: {e}")
+
     welcome_text = (
         f"🕵️‍♂️ <b>SCOUTrr — Народная OSINT-База</b>\n\n"
         f"Добро пожаловать в коллективный Центр Поиска Данных! 🌐\n\n"
         f"• <b>🔍 Искать человека</b> — отправь номер, @username или ФИО.\n"
-        f"• <b>⚡ Мощный Deep Search</b> — приватный индивидуальный пробив по утечкам.\n"
-        f"• <b>➕ Добавить человека</b> — отправить данные на проверку.\n\n"
+        f"• <b>⚡ Мощный Deep Search</b> — приватный пробив по закрытым источникам.\n"
+        f"• <b>🔗 Партнёрка</b> — забери Deep Search БЕСПЛАТНО за 1 час!\n\n"
         f"🆔 <b>Твой TG ID:</b> <code>{user.id}</code>"
     )
     await update.message.reply_text(welcome_text, parse_mode="HTML", reply_markup=get_bottom_keyboard())
+
+# --- ПАРТНЁРСКАЯ ПРОГРАММА С ТАЙМЕРОМ ---
+async def show_ref_program(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    bot_info = await context.bot.get_me()
+    ref_link = f"https://t.me/{bot_info.username}?start=ref_{user.id}"
+    
+    ref_count, ref_start_time = start_or_get_ref_campaign(user.id)
+    
+    current_time = int(time.time())
+    elapsed = current_time - ref_start_time
+    time_left = max(0, TIME_LIMIT_SEC - elapsed)
+    minutes_left = time_left // 60
+    seconds_left = time_left % 60
+
+    text = (
+        f"🚀 <b>АКЦИЯ: Бесплатный Deep Search за 1 час!</b>\n\n"
+        f"Пригласи <b>{REFS_NEEDED} друзей</b> по своей ссылке в течение 1 часа и получи глубокий отчёт бесплатно!\n\n"
+        f"⏱ <b>Осталось времени:</b> <code>{minutes_left:02d}:{seconds_left:02d} мин</code>\n"
+        f"👥 <b>Приглашено друзей:</b> <b>{ref_count} / {REFS_NEEDED}</b>\n\n"
+        f"🔗 <b>Твоя персональная ссылка:</b>\n"
+        f"<code>{ref_link}</code>\n\n"
+        f"⚠️ <i>Если не успеешь собрать {REFS_NEEDED} человек за 1 час, таймер и прогресс сбросятся!</i>"
+    )
+
+    await update.message.reply_text(text, parse_mode="HTML")
 
 # --- ДИП СЕРЧ / ОПЛАТА ЗВЕЗДАМИ ---
 async def show_deep_search_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -176,7 +320,7 @@ async def show_deep_search_info(update: Update, context: ContextTypes.DEFAULT_TY
         "3️⃣ 👤 <b>ФИО + Дата рождения / Город</b>\n"
         "4️⃣ 📧 <b>Email / Почта</b>\n"
         "5️⃣ 🚗 <b>Госномер или VIN авто</b>\n\n"
-        "💳 <b>Стоимость:</b> 10 ⭐️ Telegram Stars\n"
+        "💳 <b>Стоимость:</b> 10 ⭐️ Telegram Stars (или бесплатно за 5 друзей за 1 час!)\n"
         "<i>После оплаты вы отправляете вводные данные, и специалист формирует полный персональный отчёт!</i>"
     )
     markup = InlineKeyboardMarkup([
@@ -188,23 +332,18 @@ async def send_deep_search_invoice(chat_id, context):
     title = "⚡ Deep Search Отчёт"
     description = "Персональный глубокий пробив по закрытым источникам и утечкам."
     payload = "deep_search_payment"
-    currency = "XTR"  # Telegram Stars
+    currency = "XTR"
     prices = [LabeledPrice("Deep Search Отчёт", 10)]
 
     await context.bot.send_invoice(
-        chat_id=chat_id,
-        title=title,
-        description=description,
-        payload=payload,
-        provider_token="",  # Пустое поле для Telegram Stars!
-        currency=currency,
-        prices=prices
+        chat_id=chat_id, title=title, description=description,
+        payload=payload, provider_token="", currency=currency, prices=prices
     )
 
 async def precheckout_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.pre_checkout_query
     if query.invoice_payload != "deep_search_payment":
-        await query.answer(ok=False, error_message="Что-то пошло не так...")
+        await query.answer(ok=False, error_message="Ошибка оплаты...")
     else:
         await query.answer(ok=True)
 
@@ -212,25 +351,23 @@ async def successful_payment_callback(update: Update, context: ContextTypes.DEFA
     user = update.effective_user
     user_tg = f"@{user.username}" if user.username else f"ID: {user.id}"
 
-    # Сообщение пользователю
     await update.message.reply_text(
         "🎉 <b>Оплата 10 ⭐ успешно получена!</b>\n\n"
         "📩 <b>Отправьте прямо сюда в чат вводные данные для поиска:</b>\n"
         "• Номер телефона / Telegram ID / @username / ФИО / Email / Госномер.\n\n"
         "⏳ <b>Время формирования отчёта:</b> от 30 минут до 3 часов.\n"
-        "<i>Специалист уже принял ваш запрос в работу и пришлёт готовый Deep Search отчёт прямо в этот чат или в личные сообщения!</i>",
+        "<i>Специалист уже принял ваш запрос в работу и пришлёт готовый Deep Search отчёт!</i>",
         parse_mode="HTML"
     )
 
-    # Уведомление админу
     try:
         await context.bot.send_message(
             chat_id=ADMIN_ID,
             text=(
-                f"🚨 <b>НОВЫЙ ОПЛАЧЕННЫЙ ЗАКАЗ DEEP SEARCH!</b>\n\n"
+                f"🚨 <b>НОВЫЙ ОПЛАЧЕННЫЙ ЗАКАЗ DEEP SEARCH (STARS)!</b>\n\n"
                 f"👤 <b>Покупатель:</b> {user_tg} (ID: <code>{user.id}</code>)\n"
-                f"💰 <b>Сумма:</b> 10 ⭐ (Telegram Stars)\n\n"
-                f"📥 Ожидайте от него вводные данные. У вас есть до 3 часов на выдачу отчёта!"
+                f"💰 <b>Сумма:</b> 10 ⭐\n\n"
+                f"📥 Ожидайте вводные данные!"
             ),
             parse_mode="HTML"
         )
@@ -248,15 +385,12 @@ async def add_dossier_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             "⚠️ <b>Ошибка формата!</b>\n\n"
             "Отправь данные в одну строчку через разделитель <code>|</code>:\n"
-            "<code>/add НОМЕР | ФИО | ТЕЛЕФОН | ЮЗЕРНЕЙМ | ИНФОРМАЦИЯ</code>\n\n"
-            "💡 <b>Пример:</b>\n"
-            "<code>/add +380991234567 | Иванов Иван | +380991234567 | @vanya | ДР: 15.05.2005. Город: Киев.</code>",
+            "<code>/add НОМЕР | ФИО | ТЕЛЕФОН | ЮЗЕРНЕЙМ | ИНФОРМАЦИЯ</code>",
             parse_mode="HTML"
         )
         return
 
     parts = [p.strip() for p in full_text.split("|")]
-
     search_key = parts[0]
     full_name = parts[1] if len(parts) > 1 else "Не указано"
     phone = parts[2] if len(parts) > 2 else "Не указано"
@@ -265,56 +399,32 @@ async def add_dossier_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     pending_id = save_pending(user.id, search_key, full_name, phone, username, notes)
 
-    await update.message.reply_text(
-        "⏳ <b>Заявка отправлена модератору!</b>\n"
-        "После проверки администратором данные будут добавлены в общую базу.",
-        parse_mode="HTML"
-    )
+    await update.message.reply_text("⏳ <b>Заявка отправлена модератору!</b>", parse_mode="HTML")
 
     admin_markup = InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("✅ Одобрить", callback_data=f"approve_{pending_id}"),
-            InlineKeyboardButton("❌ Отклонить", callback_data=f"reject_{pending_id}")
-        ]
+        [InlineKeyboardButton("✅ Одобрить", callback_data=f"approve_{pending_id}"),
+         InlineKeyboardButton("❌ Отклонить", callback_data=f"reject_{pending_id}")]
     ])
-
     user_tg = f"@{user.username}" if user.username else f"ID: {user.id}"
 
     try:
         await context.bot.send_message(
             chat_id=ADMIN_ID,
-            text=(
-                f"📥 <b>Новая заявка на добавление!</b>\n"
-                f"От: {user_tg} (ID: <code>{user.id}</code>)\n\n"
-                f"[+] <b>Номер/Ключ:</b> <code>{search_key}</code>\n"
-                f"[+] <b>ФИО:</b> {full_name}\n"
-                f"[+] <b>Телефон:</b> {phone}\n"
-                f"[+] <b>Юзернейм:</b> {username}\n"
-                f"[+] <b>Заметки:</b> {notes}"
-            ),
-            parse_mode="HTML",
-            reply_markup=admin_markup
+            text=f"📥 <b>Заявка на добавление:</b> от {user_tg}\nКлюч: <code>{search_key}</code>",
+            parse_mode="HTML", reply_markup=admin_markup
         )
     except Exception as e:
-        print(f"Ошибка при отправке заявки админу: {e}")
+        print(f"Ошибка админа: {e}")
 
 # --- УДАЛЕНИЕ (АДМИН) ---
 async def del_dossier_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if user_id != ADMIN_ID:
-        await update.message.reply_text("⛔ <b>У вас нет прав на удаление записей!</b>", parse_mode="HTML")
+    if update.effective_user.id != ADMIN_ID:
         return
-
     key = update.message.text.partition(' ')[2].strip()
-    if not key:
-        await update.message.reply_text("⚠️ Укажите номер для удаления: <code>/del +380xxxxxxxxx</code>", parse_mode="HTML")
-        return
-
-    deleted = delete_from_db_by_key(key)
-    if deleted > 0:
-        await update.message.reply_text(f"🗑 Запись по номеру <code>{key}</code> удалена из базы!", parse_mode="HTML")
+    if delete_from_db_by_key(key) > 0:
+        await update.message.reply_text(f"🗑 Запись <code>{key}</code> удалена!", parse_mode="HTML")
     else:
-        await update.message.reply_text(f"❓ Запись <code>{key}</code> не найдена.", parse_mode="HTML")
+        await update.message.reply_text("❓ Запись не найдена.", parse_mode="HTML")
 
 # --- ПОИСК И ВЫВОД КАРТОЧКИ ---
 async def handle_user_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -326,37 +436,35 @@ async def handle_user_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif "⚡ Мощный Deep Search" in raw_input or raw_input == "/deepsearch":
         await show_deep_search_info(update, context)
         return
+    elif "🔗 Партнёрка" in raw_input or raw_input == "/ref":
+        await show_ref_program(update, context)
+        return
     elif "➕ Добавить человека" in raw_input:
-        instruction = (
-            "➕ <b>Как предложить запись в базу:</b>\n\n"
-            "Скопируй шаблон, заполни данные и отправь боту одной строкой:\n\n"
-            "<code>/add НОМЕР | ФИО | ТЕЛЕФОН | ЮЗЕРНЕЙМ | ИНФОРМАЦИЯ</code>\n\n"
-            "💡 Заявка уйдёт администратору на модерацию и после проверки появится в базе!"
+        await update.message.reply_text(
+            "➕ <b>Отправь данные в формате:</b>\n<code>/add НОМЕР | ФИО | ТЕЛЕФОН | ЮЗЕРНЕЙМ | ИНФОРМАЦИЯ</code>",
+            parse_mode="HTML"
         )
-        await update.message.reply_text(instruction, parse_mode="HTML")
         return
     elif "📖 Инструкция" in raw_input or raw_input == "/help":
         await start(update, context)
         return
     elif "ℹ️ Мой Баланс" in raw_input:
-        await update.message.reply_text("📊 <b>Ваш баланс:</b> Безлимитный доступ к базам.", parse_mode="HTML")
+        await update.message.reply_text("📊 <b>Ваш статус:</b> Доступ активен", parse_mode="HTML")
         return
 
-    status_msg = await update.message.reply_text(f"🔎 <b>Сбор информации по запросу:</b> <code>{raw_input}</code>...", parse_mode="HTML")
+    status_msg = await update.message.reply_text(f"🔎 <b>Сбор информации:</b> <code>{raw_input}</code>...", parse_mode="HTML")
 
     db_matches = search_in_db(raw_input)
-    
     clean_phone = re.sub(r"\D", "", raw_input)
     phone_info = ""
     if clean_phone:
         if len(clean_phone) == 11 and clean_phone.startswith("8"):
             clean_phone = "7" + clean_phone[1:]
-        formatted_phone = f"+{clean_phone}"
         try:
-            parsed_num = phonenumbers.parse(formatted_phone, None)
+            parsed_num = phonenumbers.parse(f"+{clean_phone}", None)
             if phonenumbers.is_valid_number(parsed_num):
                 c_name = geocoder.description_for_number(parsed_num, "ru") or "Неизвестно"
-                op_name = carrier.name_for_number(parsed_num, "ru") or "Частный/Неизвестен"
+                op_name = carrier.name_for_number(parsed_num, "ru") or "Частный"
                 phone_info = f"[+] С т р а н а : {c_name}\n[+] О п е р а т о р : {op_name}\n"
         except Exception:
             pass
@@ -369,22 +477,20 @@ async def handle_user_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
             rec_id, full_name, phone, username, notes = record
             if not first_record_id:
                 first_record_id = rec_id
-            
             clean_user_display = username.lstrip("@") if username else "Не указан"
             
-            output.append(f"🕵️‍♂️ <b>Результат из Народной Базы:</b>")
+            output.append("🕵️‍♂️ <b>Результат из Народной Базы:</b>")
             output.append(f"[+] Ф И О : {full_name}")
             output.append(f"[+] Н о м е р : {phone}")
             output.append(f"[+] Ю з е р н е й м : @{clean_user_display}")
             if phone_info:
                 output.append(phone_info.strip())
             
-            notes_lines = [n.strip() for n in re.split(r'\||\n', notes) if n.strip()]
-            for line in notes_lines:
+            for line in [n.strip() for n in re.split(r'\||\n', notes) if n.strip()]:
                 output.append(f"[+] {line}")
             output.append("")
     else:
-        output.append(f"📁 <b>Народная база:</b> Запись не найдена.")
+        output.append("📁 <b>Народная база:</b> Запись не найдена.")
         if phone_info:
             output.append(phone_info.strip())
         output.append("")
@@ -403,12 +509,10 @@ async def handle_user_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     }
 
     for key in ["tg", "vk", "yt", "tt", "stm", "gh"]:
-        name = ALL_SERVICES[key]
-        url = service_urls[key]
         try:
-            res = requests.get(url, headers=headers, timeout=1.5)
+            res = requests.get(service_urls[key], headers=headers, timeout=1.5)
             if res.status_code in [200, 301, 302] and "page_not_found" not in res.url:
-                social_results.append(f"[+] {name} : Найден ({url})")
+                social_results.append(f"[+] {ALL_SERVICES[key]} : Найден ({service_urls[key]})")
         except Exception:
             pass
 
@@ -417,24 +521,20 @@ async def handle_user_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
         output.extend(social_results)
         output.append("")
 
-    output.append("⚠️ <b>Примечание:</b> Юзернеймы и контактные данные пользователей могут со временем меняться!")
+    output.append("⚠️ Данные могут со временем меняться.")
 
-    final_text = "\n".join(output)
-    
     inline_buttons = []
     if first_record_id:
         inline_buttons.append([InlineKeyboardButton("⚠️ Пожаловаться на запись", callback_data=f"report_{first_record_id}")])
-    
     inline_buttons.append([InlineKeyboardButton("⚡ Заказать глубокий Deep Search (10 ⭐)", callback_data="buy_deep_search")])
 
-    reply_markup = InlineKeyboardMarkup(inline_buttons)
-
-    await status_msg.edit_text(final_text, parse_mode="HTML", disable_web_page_preview=True, reply_markup=reply_markup)
+    await status_msg.edit_text("\n".join(output), parse_mode="HTML", disable_web_page_preview=True, reply_markup=InlineKeyboardMarkup(inline_buttons))
 
 # --- ОБРАБОТКА НАЖАТИЙ КНОПОК ---
 async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     data = query.data
+    user = query.from_user
     await query.answer()
 
     if data == "buy_deep_search":
@@ -447,68 +547,34 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             user_id, search_key, full_name, phone, username, notes = item
             add_to_db(search_key, full_name, phone, username, notes)
             delete_pending(pending_id)
-
-            await query.edit_message_text(f"{query.message.text}\n\n✅ <b>ОДОБРЕНО И ДОБАВЛЕНО В БАЗУ</b>", parse_mode="HTML")
-            
+            await query.edit_message_text(f"{query.message.text}\n\n✅ <b>ОДОБРЕНО</b>", parse_mode="HTML")
             try:
-                await context.bot.send_message(
-                    chat_id=user_id,
-                    text=f"🎉 <b>Ваша запись по номеру <code>{search_key}</code> прошла модерацию и добавлена в базу!</b>",
-                    parse_mode="HTML"
-                )
+                await context.bot.send_message(chat_id=user_id, text=f"🎉 Ваша запись <code>{search_key}</code> добавлена в базу!", parse_mode="HTML")
             except Exception:
                 pass
-        else:
-            await query.edit_message_text("⚠️ Заявка уже обработана.")
 
     elif data.startswith("reject_"):
         pending_id = int(data.split("_")[1])
         item = get_pending_by_id(pending_id)
         if item:
-            user_id = item[0]
             delete_pending(pending_id)
             await query.edit_message_text(f"{query.message.text}\n\n❌ <b>ОТКЛОНЕНО</b>", parse_mode="HTML")
-            try:
-                await context.bot.send_message(
-                    chat_id=user_id,
-                    text="❌ Ваша заявка на добавление записи была отклонена модератором."
-                )
-            except Exception:
-                pass
 
     elif data.startswith("report_"):
         rec_id = int(data.split("_")[1])
-        user = query.from_user
-        
         await query.edit_message_reply_markup(reply_markup=None)
-        await context.bot.send_message(
-            chat_id=query.message.chat_id,
-            text="🚨 <b>Спасибо! Жалоба отправлена модераторам.</b>",
-            parse_mode="HTML"
-        )
-
-        admin_del_markup = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🗑 Удалить эту запись из БД", callback_data=f"adm_del_{rec_id}")]
-        ])
+        await context.bot.send_message(chat_id=query.message.chat_id, text="🚨 Жалоба отправлена модераторам.", parse_mode="HTML")
         user_tg = f"@{user.username}" if user.username else f"ID: {user.id}"
         await context.bot.send_message(
             chat_id=ADMIN_ID,
-            text=(
-                f"⚠️ <b>ПОСТУПИЛА ЖАЛОБА НА ЗАПИСЬ (ID: {rec_id})!</b>\n"
-                f"От пользователя: {user_tg}\n\n"
-                f"Текст карточки:\n{query.message.text}"
-            ),
-            parse_mode="HTML",
-            reply_markup=admin_del_markup
+            text=f"⚠️ <b>Жалоба на запись ID {rec_id}</b> от {user_tg}",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🗑 Удалить", callback_data=f"adm_del_{rec_id}")]])
         )
 
     elif data.startswith("adm_del_"):
         rec_id = int(data.split("_")[1])
-        rows = delete_from_db_by_id(rec_id)
-        if rows > 0:
-            await query.edit_message_text(f"{query.message.text}\n\n🗑 <b>ЗАПИСЬ УСПЕШНО УДАЛЕНА ИЗ БАЗЫ!</b>", parse_mode="HTML")
-        else:
-            await query.edit_message_text("❓ Запись уже была удалена ранее.")
+        if delete_from_db_by_id(rec_id) > 0:
+            await query.edit_message_text(f"{query.message.text}\n\n🗑 <b>ЗАПИСЬ УДАЛЕНА</b>", parse_mode="HTML")
 
 if __name__ == '__main__':
     app = ApplicationBuilder().token(TOKEN).post_init(post_init).build()
@@ -516,10 +582,10 @@ if __name__ == '__main__':
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", start))
     app.add_handler(CommandHandler("deepsearch", show_deep_search_info))
+    app.add_handler(CommandHandler("ref", show_ref_program))
     app.add_handler(CommandHandler("add", add_dossier_cmd))
     app.add_handler(CommandHandler("del", del_dossier_cmd))
     
-    # Обработчики платежей Telegram Stars
     app.add_handler(PreCheckoutQueryHandler(precheckout_callback))
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
     
