@@ -4,17 +4,16 @@ import sqlite3
 import requests
 import phonenumbers
 from phonenumbers import geocoder, carrier
-from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, BotCommand
+from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton, BotCommand
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler, 
-    ConversationHandler, filters, ContextTypes
+    CallbackQueryHandler, filters, ContextTypes
 )
 
 TOKEN = "8408315552:AAG5CczuITP2tJnNdMlCnRPXnvXoM6-xSUA"
-ADMIN_ID = 7786483533
 
-# Состояния для пошагового диалога добавления
-WAITING_KEY, WAITING_FNAME, WAITING_NOTES = range(3)
+# ⚠️ ТВОЙ TELEGRAM ID ДЛЯ ПОЛУЧЕНИЯ ЗАЯВОК И ЖАЛОБ
+ADMIN_ID = 7786483533
 
 ALL_SERVICES = {
     "tg": "Telegram",
@@ -30,13 +29,27 @@ ALL_SERVICES = {
     "hb": "Habr"
 }
 
+# --- БАЗА ДАННЫХ ---
 def init_db():
     conn = sqlite3.connect("dossier_database.db")
     cursor = conn.cursor()
+    # Таблица досье
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS dossiers (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             search_key TEXT UNIQUE,
+            full_name TEXT,
+            phone TEXT,
+            username TEXT,
+            notes TEXT
+        )
+    ''')
+    # Таблица очереди модерации
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS pending_add (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            search_key TEXT,
             full_name TEXT,
             phone TEXT,
             username TEXT,
@@ -51,7 +64,7 @@ def search_in_db(query_text: str):
     conn = sqlite3.connect("dossier_database.db")
     cursor = conn.cursor()
     cursor.execute('''
-        SELECT full_name, phone, username, notes FROM dossiers 
+        SELECT id, full_name, phone, username, notes FROM dossiers 
         WHERE LOWER(search_key) LIKE ? 
            OR LOWER(phone) LIKE ? 
            OR LOWER(username) LIKE ? 
@@ -72,16 +85,54 @@ def add_to_db(search_key: str, full_name: str, phone: str, username: str, notes:
     conn.commit()
     conn.close()
 
-def delete_from_db(search_key: str):
+def delete_from_db_by_id(rec_id: int):
+    conn = sqlite3.connect("dossier_database.db")
+    cursor = conn.cursor()
+    cursor.execute('DELETE FROM dossiers WHERE id = ?', (rec_id,))
+    rows = cursor.rowcount
+    conn.commit()
+    conn.close()
+    return rows
+
+def delete_from_db_by_key(search_key: str):
     clean_key = search_key.lower().replace("+", "").replace("@", "").strip()
     conn = sqlite3.connect("dossier_database.db")
     cursor = conn.cursor()
     cursor.execute('DELETE FROM dossiers WHERE LOWER(search_key) = ? OR LOWER(phone) = ?', (clean_key, clean_key))
-    rows_deleted = cursor.rowcount
+    rows = cursor.rowcount
     conn.commit()
     conn.close()
-    return rows_deleted
+    return rows
 
+def save_pending(user_id: int, search_key: str, full_name: str, phone: str, username: str, notes: str):
+    clean_key = search_key.lower().replace("+", "").replace("@", "").strip()
+    conn = sqlite3.connect("dossier_database.db")
+    cursor = conn.cursor()
+    cursor.execute('''
+        INSERT INTO pending_add (user_id, search_key, full_name, phone, username, notes)
+        VALUES (?, ?, ?, ?, ?, ?)
+    ''', (user_id, clean_key, full_name, phone, username, notes))
+    pending_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    return pending_id
+
+def get_pending_by_id(pending_id: int):
+    conn = sqlite3.connect("dossier_database.db")
+    cursor = conn.cursor()
+    cursor.execute('SELECT user_id, search_key, full_name, phone, username, notes FROM pending_add WHERE id = ?', (pending_id,))
+    res = cursor.fetchone()
+    conn.close()
+    return res
+
+def delete_pending(pending_id: int):
+    conn = sqlite3.connect("dossier_database.db")
+    cursor = conn.cursor()
+    cursor.execute('DELETE FROM pending_add WHERE id = ?', (pending_id,))
+    conn.commit()
+    conn.close()
+
+# --- ИНТЕРФЕЙС ---
 def get_bottom_keyboard():
     keyboard = [
         [KeyboardButton("🔍 Искать человека"), KeyboardButton("➕ Добавить человека")],
@@ -93,8 +144,8 @@ async def post_init(application) -> None:
     init_db()
     commands = [
         BotCommand("start", "Главное меню"),
-        BotCommand("add", "Добавить запись в БД"),
-        BotCommand("cancel", "Отмена действия"),
+        BotCommand("help", "Инструкция"),
+        BotCommand("add", "Добавить запись на модерацию"),
         BotCommand("del", "Удалить запись (Админ)")
     ]
     await application.bot.set_my_commands(commands)
@@ -104,68 +155,69 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome_text = (
         f"🕵️‍♂️ **SCOUTrr — Народная OSINT-База**\n\n"
         f"Добро пожаловать в коллективный Центр Поиска Данных! 🌐\n\n"
-        f"Выберите действие с помощью кнопок ниже:\n"
-        f"• **🔍 Искать человека** — найти досье по номеру, нику или ФИО.\n"
-        f"• **➕ Добавить человека** — внести новые данные в общую базу по шагам.\n\n"
+        f"• **🔍 Искать человека** — отправь номер, @username или ФИО.\n"
+        f"• **➕ Добавить человека** — отправить данные на проверку.\n\n"
         f"🆔 **Твой TG ID:** `{user.id}`"
     )
     await update.message.reply_text(welcome_text, parse_mode="Markdown", reply_markup=get_bottom_keyboard())
 
-# --- ПОШАГОВЫЙ МАСТЕР ДОБАВЛЕНИЯ ---
-async def start_add_wizard(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# --- ДОБАВЛЕНИЕ (ОТПРАВКА НА ПРЕМОДЕРАЦИЮ) ---
+async def add_dossier_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    full_text = update.message.text
+    if full_text.startswith('/add'):
+        full_text = full_text[4:].strip()
+
+    if not full_text or "|" not in full_text:
+        await update.message.reply_text(
+            "⚠️ **Ошибка формата!**\n\n"
+            "Отправь данные в одну строчку через разделитель `|`:\n"
+            "`/add НОМЕР | ФИО | ТЕЛЕФОН | ЮЗЕРНЕЙМ | ИНФОРМАЦИЯ`\n\n"
+            "💡 **Пример:**\n"
+            "`/add +380991234567 | Иванов Иван | +380991234567 | @vanya | ДР: 15.05.2005. Город: Киев.`",
+            parse_mode="Markdown"
+        )
+        return
+
+    parts = [p.strip() for p in full_text.split("|")]
+
+    search_key = parts[0]
+    full_name = parts[1] if len(parts) > 1 else "Не указано"
+    phone = parts[2] if len(parts) > 2 else "Не указано"
+    username = parts[3] if len(parts) > 3 else "Не указано"
+    notes = " | ".join(parts[4:]) if len(parts) > 4 else "Нет заметок"
+
+    # Сохраняем в заявки
+    pending_id = save_pending(user.id, search_key, full_name, phone, username, notes)
+
     await update.message.reply_text(
-        "📝 **Шаг 1 из 3:**\n\n"
-        "Отправьте главный **номер телефона** или **@username**, по которому люди будут находить запись.\n\n"
-        "_Для отмены отправьте /cancel_",
+        "⏳ **Заявка отправлена модератору!**\n"
+        "После проверки администратором данные будут добавлены в общую базу.",
         parse_mode="Markdown"
     )
-    return WAITING_KEY
 
-async def get_add_key(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['add_key'] = update.message.text.strip()
-    await update.message.reply_text(
-        "👤 **Шаг 2 из 3:**\n\n"
-        "Введите **ФИО или Имя** человека (например: `Иванов Иван`):\n"
-        "_(Если не знаете, отправьте `-`)_",
-        parse_mode="Markdown"
-    )
-    return WAITING_FNAME
+    # Отправляем сообщение АДМИНУ с кнопками
+    admin_markup = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("✅ Одобрить", callback_data=f"approve_{pending_id}"),
+            InlineKeyboardButton("❌ Отклонить", callback_data=f"reject_{pending_id}")
+        ]
+    ])
 
-async def get_add_fname(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['add_fname'] = update.message.text.strip()
-    await update.message.reply_text(
-        "📌 **Шаг 3 из 3:**\n\n"
-        "Введите **дополнительную информацию** (дата рождения, город, юзернейм, заметки):\n"
-        "_(Если нет доп. информации, отправьте `-`)_",
-        parse_mode="Markdown"
-    )
-    return WAITING_NOTES
-
-async def get_add_notes(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    key = context.user_data.get('add_key', 'Не указано')
-    fname = context.user_data.get('add_fname', 'Не указано')
-    notes = update.message.text.strip()
-
-    phone = key if re.sub(r"\D", "", key) else "Не указано"
-    username = key if key.startswith("@") or not re.sub(r"\D", "", key) else "Не указано"
-
-    add_to_db(key, fname, phone, username, notes)
-
-    await update.message.reply_text(
-        f"✅ **Данные успешно добавлены в Народную Базу!**\n\n"
-        f"[+] Н о м е р / К л ю ч : `{key}`\n"
-        f"[+] Ф И О : {fname}\n"
-        f"[+] Заметки : {notes}",
+    await context.bot.send_message(
+        chat_id=ADMIN_ID,
+        text=(
+            f"📥 **Новая заявка на добавление!**\n"
+            f"От: [{user.first_name}](tg://user?id={user.id}) (`{user.id}`)\n\n"
+            f"[+] **Номер/Ключ:** `{search_key}`\n"
+            f"[+] **ФИО:** {full_name}\n"
+            f"[+] **Телефон:** {phone}\n"
+            f"[+] **Юзернейм:** {username}\n"
+            f"[+] **Заметки:** {notes}"
+        ),
         parse_mode="Markdown",
-        reply_markup=get_bottom_keyboard()
+        reply_markup=admin_markup
     )
-    context.user_data.clear()
-    return ConversationHandler.END
-
-async def cancel_wizard(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data.clear()
-    await update.message.reply_text("❌ Добавление отменено.", reply_markup=get_bottom_keyboard())
-    return ConversationHandler.END
 
 # --- УДАЛЕНИЕ (АДМИН) ---
 async def del_dossier_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -179,7 +231,7 @@ async def del_dossier_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ Укажите номер для удаления: `/del +380xxxxxxxxx`", parse_mode="Markdown")
         return
 
-    deleted = delete_from_db(key)
+    deleted = delete_from_db_by_key(key)
     if deleted > 0:
         await update.message.reply_text(f"🗑 Запись по номеру `{key}` удалена из базы!", parse_mode="Markdown")
     else:
@@ -191,6 +243,15 @@ async def handle_user_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if "🔍 Искать человека" in raw_input:
         await update.message.reply_text("🔎 Отправь номер телефона, @username или ФИО для поиска:")
+        return
+    elif "➕ Добавить человека" in raw_input:
+        instruction = (
+            "➕ **Как предложить запись в базу:**\n\n"
+            "Скопируй шаблон, заполни данные и отправь боту одной строкой:\n\n"
+            "`/add НОМЕР | ФИО | ТЕЛЕФОН | ЮЗЕРНЕЙМ | ИНФОРМАЦИЯ`\n\n"
+            "💡 Заявка уйдёт администратору на модерацию и после проверки появится в базе!"
+        )
+        await update.message.reply_text(instruction, parse_mode="Markdown")
         return
     elif "📖 Инструкция" in raw_input or raw_input == "/help":
         await start(update, context)
@@ -219,10 +280,14 @@ async def handle_user_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
 
     output = []
+    first_record_id = None
     
     if db_matches:
         for record in db_matches:
-            full_name, phone, username, notes = record
+            rec_id, full_name, phone, username, notes = record
+            if not first_record_id:
+                first_record_id = rec_id
+            
             output.append(f"🕵️‍♂️ **Результат из Народной Базы:**")
             output.append(f"[+] Ф И О : {full_name}")
             output.append(f"[+] Н о м е р : {phone}")
@@ -268,29 +333,106 @@ async def handle_user_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
         output.extend(social_results)
 
     final_text = "\n".join(output)
-    await status_msg.edit_text(final_text, parse_mode="Markdown", disable_web_page_preview=True)
+    
+    # Кнопка жалобы под результатами
+    reply_markup = None
+    if first_record_id:
+        reply_markup = InlineKeyboardMarkup([
+            [InlineKeyboardButton("⚠️ Пожаловаться на запись", callback_data=f"report_{first_record_id}")]
+        ])
+
+    await status_msg.edit_text(final_text, parse_mode="Markdown", disable_web_page_preview=True, reply_markup=reply_markup)
+
+# --- ОБРАБОТКА НАЖАТИЙ КНОПОК МОДЕРАЦИИ И ЖАЛОБ ---
+async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    data = query.data
+    await query.answer()
+
+    # Админ одобрил заявку
+    if data.startswith("approve_"):
+        pending_id = int(data.split("_")[1])
+        item = get_pending_by_id(pending_id)
+        if item:
+            user_id, search_key, full_name, phone, username, notes = item
+            add_to_db(search_key, full_name, phone, username, notes)
+            delete_pending(pending_id)
+
+            await query.edit_message_text(f"{query.message.text}\n\n✅ **ОДОБРЕНО И ДОБАВЛЕНО В БАЗУ**", parse_mode="Markdown")
+            
+            # Уведомляем автора
+            try:
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text=f"🎉 **Ваша запись по номеру `{search_key}` прошла модерацию и добавлена в общую базу!**",
+                    parse_mode="Markdown"
+                )
+            except Exception:
+                pass
+        else:
+            await query.edit_message_text("⚠️ Заявка уже обработана.")
+
+    # Админ отклонил заявку
+    elif data.startswith("reject_"):
+        pending_id = int(data.split("_")[1])
+        item = get_pending_by_id(pending_id)
+        if item:
+            user_id = item[0]
+            delete_pending(pending_id)
+            await query.edit_message_text(f"{query.message.text}\n\n❌ **ОТКЛОНЕНО**", parse_mode="Markdown")
+            try:
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text="❌ Ваша заявка на добавление записи была отклонена модератором."
+                )
+            except Exception:
+                pass
+
+    # Пользователь нажал "Пожаловаться"
+    elif data.startswith("report_"):
+        rec_id = int(data.split("_")[1])
+        user = query.from_user
+        
+        await query.edit_message_reply_markup(reply_markup=None)
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text="🚨 **Спасибо! Жалоба отправлена модераторам.**"
+        )
+
+        # Пересылаем админу
+        admin_del_markup = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🗑 Удалить эту запись из БД", callback_data=f"adm_del_{rec_id}")]
+        ])
+        await context.bot.send_message(
+            chat_id=ADMIN_ID,
+            text=(
+                f"⚠️ **ПОСТУПИЛА ЖАЛОБА НА ЗАПИСЬ (ID: {rec_id})!**\n"
+                f"От пользователя: [{user.first_name}](tg://user?id={user.id}) (`{user.id}`)\n\n"
+                f"Текст поиска:\n{query.message.text}"
+            ),
+            parse_mode="Markdown",
+            reply_markup=admin_del_markup
+        )
+
+    # Админ жмёт "Удалить" по жалобе
+    elif data.startswith("adm_del_"):
+        rec_id = int(data.split("_")[1])
+        rows = delete_from_db_by_id(rec_id)
+        if rows > 0:
+            await query.edit_message_text(f"{query.message.text}\n\n🗑 **ЗАПИСЬ УСПЕШНО УДАЛЕНА ИЗ БАЗЫ!**", parse_mode="Markdown")
+        else:
+            await query.edit_message_text("❓ Запись уже была удалена ранее.")
 
 if __name__ == '__main__':
     app = ApplicationBuilder().token(TOKEN).post_init(post_init).build()
     
-    # Разговорный обработчик пошагового добавления
-    add_wizard = ConversationHandler(
-        entry_points=[
-            MessageHandler(filters.Regex("^➕ Добавить человека$"), start_add_wizard),
-            CommandHandler("add", start_add_wizard)
-        ],
-        states={
-            WAITING_KEY: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_add_key)],
-            WAITING_FNAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_add_fname)],
-            WAITING_NOTES: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_add_notes)],
-        },
-        fallbacks=[CommandHandler("cancel", cancel_wizard)]
-    )
-
-    app.add_handler(add_wizard)
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("help", start))
+    app.add_handler(CommandHandler("add", add_dossier_cmd))
     app.add_handler(CommandHandler("del", del_dossier_cmd))
+    
+    app.add_handler(CallbackQueryHandler(handle_callback_query))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_user_query))
     
-    print("🤖 Бот запущен!")
+    print("🤖 Бот запущен с премодерацией и системой жалоб!")
     app.run_polling()
