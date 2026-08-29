@@ -5,17 +5,16 @@ import requests
 from bs4 import BeautifulSoup
 import phonenumbers
 from phonenumbers import geocoder, carrier
-from telegram import Update, LabeledPrice, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton, BotCommand
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton, BotCommand
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler, 
-    PreCheckoutQueryHandler, CallbackQueryHandler, filters, ContextTypes
+    CallbackQueryHandler, filters, ContextTypes
 )
 
 TOKEN = "8408315552:AAG5CczuITP2tJnNdMlCnRPXnvXoM6-xSUA"
 ADMIN_IDS = [7786483533]
 
 USER_LIMITS = {}
-REFERRALS = {}
 USER_SELECTIONS = {}
 DEFAULT_FREE_LIMIT = 5
 
@@ -66,7 +65,10 @@ def search_in_db(query_text: str):
     cursor = conn.cursor()
     cursor.execute('''
         SELECT full_name, phone, username, notes FROM dossiers 
-        WHERE search_key LIKE ? OR phone LIKE ? OR username LIKE ? OR LOWER(full_name) LIKE ?
+        WHERE LOWER(search_key) LIKE ? 
+           OR LOWER(phone) LIKE ? 
+           OR LOWER(username) LIKE ? 
+           OR LOWER(full_name) LIKE ?
     ''', (f"%{clean_query}%", f"%{clean_query}%", f"%{clean_query}%", f"%{clean_query}%"))
     results = cursor.fetchall()
     conn.close()
@@ -85,60 +87,9 @@ def add_to_db(search_key: str, full_name: str, phone: str, username: str, notes:
 
 def get_bottom_keyboard():
     keyboard = [
-        [KeyboardButton("🔍 Как искать? (Инструкция)"), KeyboardButton("ℹ️ Мой Баланс")],
-        [KeyboardButton("🤝 Рефералка"), KeyboardButton("💳 Купить поиски")]
+        [KeyboardButton("🔍 Инструкция"), KeyboardButton("ℹ️ Мой Баланс")]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-
-def get_main_keyboard():
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🤝 Реферальная ссылка", callback_data="btn_ref")],
-        [InlineKeyboardButton("💳 Купить поиски (+2 ⭐️)", callback_data="btn_buy")],
-        [InlineKeyboardButton("ℹ️ Баланс и OSINT Инфо", callback_data="btn_info")]
-    ])
-
-def get_platforms_keyboard(user_id: int, query_target: str):
-    if user_id not in USER_SELECTIONS:
-        USER_SELECTIONS[user_id] = set(ALL_SERVICES.keys())
-    selected = USER_SELECTIONS[user_id]
-    buttons = []
-    keys = list(ALL_SERVICES.keys())
-    for i in range(0, len(keys), 2):
-        row = []
-        k1 = keys[i]
-        icon1 = "✅" if k1 in selected else "❌"
-        row.append(InlineKeyboardButton(f"{icon1} {ALL_SERVICES[k1]}", callback_data=f"toggle_{k1}_{query_target}"))
-        if i + 1 < len(keys):
-            k2 = keys[i+1]
-            icon2 = "✅" if k2 in selected else "❌"
-            row.append(InlineKeyboardButton(f"{icon2} {ALL_SERVICES[k2]}", callback_data=f"toggle_{k2}_{query_target}"))
-        buttons.append(row)
-    buttons.append([
-        InlineKeyboardButton("✅ Выбрать все", callback_data=f"select_all_{query_target}"),
-        InlineKeyboardButton("❌ Снять все", callback_data=f"deselect_all_{query_target}")
-    ])
-    buttons.append([InlineKeyboardButton("🚀 ИСКАТЬ ПО САЙТАМ И ПЛАТФОРМАМ", callback_data=f"start_search_{query_target}")])
-    return InlineKeyboardMarkup(buttons)
-
-def parse_page_details(url: str, response_text: str, service_key: str) -> str:
-    try:
-        soup = BeautifulSoup(response_text, 'html.parser')
-        info_parts = []
-        og_desc = soup.find("meta", property="og:description") or soup.find("meta", attrs={"name": "description"})
-        if og_desc and og_desc.get("content"):
-            desc = og_desc["content"].strip().replace("\n", " ")
-            if len(desc) > 120:
-                desc = desc[:117] + "..."
-            info_parts.append(f"📝 *Описание:* {desc}")
-        og_title = soup.find("meta", property="og:title")
-        if og_title and og_title.get("content"):
-            title = og_title["content"].strip()
-            info_parts.append(f"👤 *Имя/Заголовок:* {title}")
-        if info_parts:
-            return "\n   " + "\n   ".join(info_parts)
-    except Exception:
-        pass
-    return ""
 
 def get_user_limit(user_id: int) -> int:
     if user_id not in USER_LIMITS:
@@ -158,50 +109,150 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     limit = get_user_limit(user.id)
     welcome_text = (
-        f"🕵️‍♂️ **OSINT Sherlock Bot** 🕵️‍♂️\n\n"
-        f"💡 **Введи любой запрос для проведения поиска:**\n"
-        f"• **Никнейм:** `alex_dev` или `@alex_dev`\n"
-        f"• **Номер телефона:** `+79991234567` или `380980092647`\n"
-        f"• **ФИО:** `Иванов Иван`\n\n"
-        f"🆔 **Твой ID:** `{user.id}`\n"
-        f"📊 **Баланс поисков:** `{limit}`"
+        f"🕵️‍♂️ **Добро пожаловать в OSINT Sherlock Bot!**\n\n"
+        f"💡 **Как работать с ботом:**\n"
+        f"1️⃣ Напишите в чат любой запрос (ФИО, номер телефона или @username).\n"
+        f"2️⃣ Бот спросит, **какой именно тип поиска** вы хотите выполнить.\n"
+        f"3️⃣ Выберите нужную кнопку и получите мгновенный отчёт!\n\n"
+        f"📋 **Примеры запросов:**\n"
+        f"• `Сидоров` или `Иванов Иван`\n"
+        f"• `+79991234567`\n"
+        f"• `@alex_dev`\n\n"
+        f"🆔 **Ваш Telegram ID:** `{user.id}`\n"
+        f"📊 **Доступно поисков:** `{limit}`"
     )
     await update.message.reply_text(welcome_text, parse_mode="Markdown", reply_markup=get_bottom_keyboard())
 
-async def add_dossier_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    
-    if user_id not in ADMIN_IDS:
-        await update.message.reply_text(f"❌ Ваш ID ({user_id}) отсутствует в ADMIN_IDS!")
+# --- ВЫБОР ТИПА ПОИСКА ПОСЛЕ ВВОДА ЗАПРОСА ---
+async def handle_user_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    raw_input = update.message.text.strip()
+
+    if raw_input == "🔍 Инструкция":
+        await start(update, context)
+        return
+    elif raw_input == "ℹ️ Мой Баланс":
+        await update.message.reply_text(f"📊 **Ваш баланс:** `{get_user_limit(user_id)}` поисков.", parse_mode="Markdown")
         return
 
-    raw_text = update.message.text.partition(' ')[2].strip()
-    
-    if not raw_text or "|" not in raw_text:
-        await update.message.reply_text(
-            "⚠️ **Формат команды:**\n"
-            "`/add +79991234567 | Сидоров Алексей Иванович | +79991234567 | @sidorov_test | Тестовая запись`",
-            parse_mode="Markdown"
-        )
+    if get_user_limit(user_id) <= 0:
+        await update.message.reply_text("❌ У вас закончились бесплатные поиски!")
         return
 
-    parts = [p.strip() for p in raw_text.split("|")]
-    
-    if len(parts) < 5:
-        await update.message.reply_text("⚠️ Нужно указать 5 полей через разделитель `|`!", parse_mode="Markdown")
-        return
+    # Клавиатура с выбором типа поиска
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📁 Искать в закрытой Базе Досье", callback_data=f"mode_db_{raw_input}")],
+        [InlineKeyboardButton("📞 Проверить Телефон (Страна/Оператор/Мессенджеры)", callback_data=f"mode_phone_{raw_input}")],
+        [InlineKeyboardButton("🌐 Сканировать Соцсети & Платформы", callback_data=f"mode_social_{raw_input}")]
+    ])
 
-    search_key, full_name, phone, username, notes = parts[0], parts[1], parts[2], parts[3], parts[4]
-    
-    add_to_db(search_key, full_name, phone, username, notes)
     await update.message.reply_text(
-        f"✅ **Запись сохранена!**\n\n"
-        f"🔑 **Ключ:** `{search_key}`\n"
-        f"👤 **ФИО:** {full_name}\n"
-        f"📞 **Телефон:** `{phone}`\n"
-        f"💬 **Юзернейм:** `{username}`", 
-        parse_mode="Markdown"
+        f"🔍 **Запрос принят:** `{raw_input}`\n\n"
+        f"👇 **Выберите, какую именно информацию вы хотите найти:**",
+        parse_mode="Markdown",
+        reply_markup=keyboard
     )
+
+# --- ОБРАБОТЧИК КНОПОК И РЕЖИМОВ ПОИСКА ---
+async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = query.from_user.id
+    data = query.data
+
+    # 1. Поиск в Базе Данных
+    if data.startswith("mode_db_"):
+        search_target = data.replace("mode_db_", "")
+        await query.answer()
+        await query.message.edit_text(f"⏳ Выполняется поиск в локальной базе для `{search_target}`...", parse_mode="Markdown")
+        
+        db_matches = search_in_db(search_target)
+        if db_matches:
+            USER_LIMITS[user_id] -= 1
+            for record in db_matches:
+                full_name, phone, username, notes = record
+                dossier_text = (
+                    f"👤 **Найдено Досье в Базе:**\n"
+                    f"├ **ФИО:** {full_name}\n"
+                    f"├ **Телефон:** `{phone}`\n"
+                    f"├ **Username:** `@{username}`\n"
+                    f"└ **Заметки:** {notes}\n\n"
+                    f"📉 *Осталось поисков:* `{USER_LIMITS[user_id]}`"
+                )
+                await query.message.reply_text(dossier_text, parse_mode="Markdown")
+        else:
+            await query.message.reply_text(f"❌ Запись `{search_target}` не найдена в Базе Досье.", parse_mode="Markdown")
+        return
+
+    # 2. Анализ Телефона
+    if data.startswith("mode_phone_"):
+        phone_raw = data.replace("mode_phone_", "")
+        await query.answer()
+        
+        clean_phone = re.sub(r"\D", "", phone_raw)
+        if len(clean_phone) == 11 and clean_phone.startswith("8"):
+            clean_phone = "7" + clean_phone[1:]
+        
+        formatted_phone = f"+{clean_phone}"
+        country_name, operator_name = "Неизвестно", "Неизвестно"
+        try:
+            parsed_num = phonenumbers.parse(formatted_phone, None)
+            if phonenumbers.is_valid_number(parsed_num):
+                country_name = geocoder.description_for_number(parsed_num, "ru") or "Неизвестно"
+                operator_name = carrier.name_for_number(parsed_num, "ru") or "Частный/Неизвестен"
+        except Exception:
+            pass
+
+        wa_url = f"https://wa.me/{clean_phone}"
+        tg_url = f"https://t.me/+{clean_phone}"
+        viber_url = f"https://viber.click/{clean_phone}"
+        messenger_url = f"https://www.facebook.com/messages/t/{clean_phone}"
+        google_url = f"https://www.google.com/search?q=%22%2B{clean_phone}%22+OR+%22{clean_phone}%22"
+
+        USER_LIMITS[user_id] -= 1
+
+        phone_text = (
+            f"📞 **Анализ номера:** `{formatted_phone}`\n\n"
+            f"📌 **Данные оператора:**\n"
+            f"• Регион/Страна: `{country_name}`\n"
+            f"• Оператор связи: `{operator_name}`\n\n"
+            f"💬 **Прямые мосты в мессенджеры:**\n"
+            f"• 🟢 **WhatsApp:** [Открыть чат]({wa_url})\n"
+            f"• ✈️ **Telegram:** [Проверить]({tg_url})\n"
+            f"• 🟣 **Viber:** [Открыть чат]({viber_url})\n"
+            f"• 🔵 **FB Messenger:** [Перейти]({messenger_url})\n\n"
+            f"🔎 **Поисковая выдача:** [Google Search]({google_url})\n\n"
+            f"📉 *Осталось поисков:* `{USER_LIMITS[user_id]}`"
+        )
+        await query.message.edit_text(phone_text, parse_mode="Markdown", disable_web_page_preview=True)
+        return
+
+    # 3. Сканирование Соцсетей
+    if data.startswith("mode_social_"):
+        target = data.replace("mode_social_", "").replace("@", "")
+        await query.answer()
+        await query.message.edit_text(f"🔍 Запуск сканирования соцсетей и Maigret для `{target}`...", parse_mode="Markdown")
+        await run_full_search(target, query, user_id, context)
+        return
+
+async def parse_page_details(url: str, response_text: str) -> str:
+    try:
+        soup = BeautifulSoup(response_text, 'html.parser')
+        info_parts = []
+        og_desc = soup.find("meta", property="og:description") or soup.find("meta", attrs={"name": "description"})
+        if og_desc and og_desc.get("content"):
+            desc = og_desc["content"].strip().replace("\n", " ")
+            if len(desc) > 120:
+                desc = desc[:117] + "..."
+            info_parts.append(f"📝 *Описание:* {desc}")
+        og_title = soup.find("meta", property="og:title")
+        if og_title and og_title.get("content"):
+            title = og_title["content"].strip()
+            info_parts.append(f"👤 *Имя/Заголовок:* {title}")
+        if info_parts:
+            return "\n   " + "\n   ".join(info_parts)
+    except Exception:
+        pass
+    return ""
 
 async def run_maigret_search(username: str) -> str:
     try:
@@ -217,10 +268,9 @@ async def run_maigret_search(username: str) -> str:
     except Exception:
         return "⚠️ Сканирование завершено."
 
-async def run_full_search(username: str, update: Update, user_id: int, context: ContextTypes.DEFAULT_TYPE):
+async def run_full_search(username: str, query, user_id: int, context: ContextTypes.DEFAULT_TYPE):
     headers = {"User-Agent": "Mozilla/5.0"}
     results = []
-    selected_keys = USER_SELECTIONS.get(user_id, set(ALL_SERVICES.keys()))
 
     service_urls = {
         "tg": f"https://t.me/{username}",
@@ -237,159 +287,78 @@ async def run_full_search(username: str, update: Update, user_id: int, context: 
     }
 
     for key, name in ALL_SERVICES.items():
-        if key in selected_keys:
-            url = service_urls[key]
-            if key == "tg":
-                try:
-                    chat_info = await context.bot.get_chat(f"@{username}")
-                    title = chat_info.first_name or chat_info.title or "Профиль"
-                    bio = chat_info.bio or ""
-                    results.append(f"{name}: ✅ [Telegram Профиль]({url})\n   👤 *Имя:* {title} | Bio: {bio}")
-                except Exception:
-                    results.append(f"{name}: ❌ Не найден")
-                continue
+        url = service_urls[key]
+        if key == "tg":
             try:
-                res = requests.get(url, headers=headers, timeout=2.5)
-                if res.status_code in [200, 301, 302] and "page_not_found" not in res.url:
-                    details = parse_page_details(url, res.text, key)
-                    results.append(f"{name}: ✅ [Ссылка на профиль]({url}){details}")
-                else:
-                    results.append(f"{name}: ❌ Не найден")
+                chat_info = await context.bot.get_chat(f"@{username}")
+                title = chat_info.first_name or chat_info.title or "Профиль"
+                bio = chat_info.bio or ""
+                results.append(f"{name}: ✅ [Telegram Профиль]({url})\n   👤 *Имя:* {title} | Bio: {bio}")
             except Exception:
-                results.append(f"{name}: ⚠️ Ошибка подключения")
+                results.append(f"{name}: ❌ Не найден")
+            continue
+        try:
+            res = requests.get(url, headers=headers, timeout=2.5)
+            if res.status_code in [200, 301, 302] and "page_not_found" not in res.url:
+                details = await parse_page_details(url, res.text)
+                results.append(f"{name}: ✅ [Ссылка на профиль]({url}){details}")
+            else:
+                results.append(f"{name}: ❌ Не найден")
+        except Exception:
+            results.append(f"{name}: ⚠️ Ошибка подключения")
 
     maigret_res = await run_maigret_search(username)
     USER_LIMITS[user_id] -= 1
 
     final_text = (
-        f"📊 **Расширенный OSINT-Отчёт по нику:** `{username}`\n\n"
+        f"📊 **OSINT-Отчёт по нику:** `{username}`\n\n"
         + "\n\n".join(results) +
-        f"\n\n🔍 **Анализ глубокого сканера:**\n`{maigret_res}`\n\n"
+        f"\n\n🔍 **Результаты Maigret:**\n`{maigret_res}`\n\n"
         f"📉 *Осталось поисков:* `{USER_LIMITS[user_id]}`"
     )
 
-    msg = update.callback_query.message if update.callback_query else update.message
-    await msg.reply_text(final_text, parse_mode="Markdown", disable_web_page_preview=True, reply_markup=get_main_keyboard())
+    await query.message.reply_text(final_text, parse_mode="Markdown", disable_web_page_preview=True)
 
-async def run_phone_search(phone_raw: str, update: Update, user_id: int):
-    clean_phone = re.sub(r"\D", "", phone_raw)
-    if len(clean_phone) == 11 and clean_phone.startswith("8"):
-        clean_phone = "7" + clean_phone[1:]
+async def add_dossier_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
     
-    formatted_phone = f"+{clean_phone}"
-    country_name, operator_name = "Неизвестно", "Неизвестно"
-    try:
-        parsed_num = phonenumbers.parse(formatted_phone, None)
-        if phonenumbers.is_valid_number(parsed_num):
-            country_name = geocoder.description_for_number(parsed_num, "ru") or "Неизвестно"
-            operator_name = carrier.name_for_number(parsed_num, "ru") or "Частный/Неизвестен"
-    except Exception:
-        pass
+    if user_id not in ADMIN_IDS:
+        await update.message.reply_text(f"❌ Ваш ID ({user_id}) отсутствует в ADMIN_IDS!")
+        return
 
-    wa_url = f"https://wa.me/{clean_phone}"
-    tg_url = f"https://t.me/+{clean_phone}"
-    viber_url = f"https://viber.click/{clean_phone}"
-    messenger_url = f"https://www.facebook.com/messages/t/{clean_phone}"
-    google_url = f"https://www.google.com/search?q=%22%2B{clean_phone}%22+OR+%22{clean_phone}%22"
+    raw_text = update.message.text.partition(' ')[2].strip()
+    
+    if not raw_text or "|" not in raw_text:
+        await update.message.reply_text(
+            "⚠️ **Формат команды:**\n"
+            "`/add +79991234567 | Сидоров Алексей Иванович | +79991234567 | @sidorov_test | Запись`",
+            parse_mode="Markdown"
+        )
+        return
 
-    USER_LIMITS[user_id] -= 1
+    parts = [p.strip() for p in raw_text.split("|")]
+    
+    if len(parts) < 5:
+        await update.message.reply_text("⚠️ Нужно указать 5 полей через разделитель `|`!", parse_mode="Markdown")
+        return
 
-    phone_text = (
-        f"📞 **Анализ номера:** `{formatted_phone}`\n\n"
-        f"📌 **Данные оператора:**\n"
-        f"• Регион: `{country_name}`\n"
-        f"• Оператор: `{operator_name}`\n\n"
-        f"💬 **Прямые мосты в мессенджеры:**\n"
-        f"• 🟢 **WhatsApp:** [Открыть чат]({wa_url})\n"
-        f"• ✈️ **Telegram:** [Проверить]({tg_url})\n"
-        f"• 🟣 **Viber:** [Открыть чат]({viber_url})\n"
-        f"• 🔵 **FB Messenger:** [Перейти]({messenger_url})\n\n"
-        f"🔎 **Поисковая выдача:** [Google Search]({google_url})\n\n"
-        f"📉 *Осталось поисков:* `{USER_LIMITS[user_id]}`"
-    )
-
+    search_key, full_name, phone, username, notes = parts[0], parts[1], parts[2], parts[3], parts[4]
+    
+    add_to_db(search_key, full_name, phone, username, notes)
     await update.message.reply_text(
-        phone_text,
-        parse_mode="Markdown",
-        disable_web_page_preview=True,
-        reply_markup=get_platforms_keyboard(user_id, clean_phone)
+        f"✅ **Запись успешно добавлена в Базу Досье!**\n\n"
+        f"🔑 **Ключ:** `{search_key}`\n"
+        f"👤 **ФИО:** {full_name}\n"
+        f"📞 **Телефон:** `{phone}`\n"
+        f"💬 **Юзернейм:** `{username}`", 
+        parse_mode="Markdown"
     )
-
-async def search_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    raw_input = update.message.text.strip()
-
-    if raw_input == "🔍 Как искать? (Инструкция)":
-        await start(update, context)
-        return
-    elif raw_input == "ℹ️ Мой Баланс":
-        await update.message.reply_text(f"📊 **Доступно поисков:** `{get_user_limit(user_id)}`", parse_mode="Markdown")
-        return
-
-    if get_user_limit(user_id) <= 0:
-        await update.message.reply_text("❌ Закончились бесплатные поиски!", reply_markup=get_main_keyboard())
-        return
-
-    db_matches = search_in_db(raw_input)
-    if db_matches:
-        USER_LIMITS[user_id] -= 1
-        for record in db_matches:
-            full_name, phone, username, notes = record
-            dossier_text = (
-                f"👤 **Найдено Досье в Базе:**\n"
-                f"├ **ФИО:** {full_name}\n"
-                f"├ **Телефон:** `{phone}`\n"
-                f"├ **Username:** `@{username}`\n"
-                f"└ **Заметки:** {notes}"
-            )
-            await update.message.reply_text(
-                dossier_text, 
-                parse_mode="Markdown",
-                reply_markup=get_platforms_keyboard(user_id, username if username else phone)
-            )
-        return
-
-    clean_digits = re.sub(r"\D", "", raw_input)
-    if (len(clean_digits) >= 10 and len(clean_digits) <= 12 and raw_input.startswith("+")) or (len(clean_digits) == 11 and (raw_input.startswith("8") or raw_input.startswith("7"))):
-        await update.message.reply_text(f"🔍 Запуск анализа номера `{raw_input}`...", parse_mode="Markdown")
-        await run_phone_search(raw_input, update, user_id)
-        return
-
-    text_input = raw_input.replace("@", "")
-    await update.message.reply_text(
-        f"🎯 **Настройка OSINT-поиска для:** `{text_input}`\nВыберите платформы для сканирования:",
-        parse_mode="Markdown", 
-        reply_markup=get_platforms_keyboard(user_id, text_input)
-    )
-
-async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    user_id = query.from_user.id
-    data = query.data
-
-    if data.startswith("start_search_"):
-        username = data.replace("start_search_", "")
-        await query.answer()
-        await query.message.edit_text(f"🔍 Сканирование платформ и запуск Maigret для `{username}`...", parse_mode="Markdown")
-        await run_full_search(username, update, user_id, context)
-        return
-
-    if user_id not in USER_SELECTIONS:
-        USER_SELECTIONS[user_id] = set(ALL_SERVICES.keys())
-    if data.startswith("toggle_"):
-        _, key, username = data.split("_", 2)
-        if key in USER_SELECTIONS[user_id]:
-            USER_SELECTIONS[user_id].remove(key)
-        else:
-            USER_SELECTIONS[user_id].add(key)
-        await query.answer()
-        await query.edit_message_reply_markup(reply_markup=get_platforms_keyboard(user_id, username))
 
 if __name__ == '__main__':
     app = ApplicationBuilder().token(TOKEN).post_init(post_init).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("add", add_dossier_cmd))
     app.add_handler(CallbackQueryHandler(handle_callback))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_user))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_user_query))
     print("🤖 Бот запущен!")
     app.run_polling()
