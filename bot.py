@@ -4,10 +4,13 @@ import sqlite3
 import requests
 import phonenumbers
 from phonenumbers import geocoder, carrier
-from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton, BotCommand
+from telegram import (
+    Update, ReplyKeyboardMarkup, KeyboardButton, 
+    InlineKeyboardMarkup, InlineKeyboardButton, BotCommand, LabeledPrice
+)
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler, 
-    CallbackQueryHandler, filters, ContextTypes
+    CallbackQueryHandler, PreCheckoutQueryHandler, filters, ContextTypes
 )
 
 TOKEN = "8408315552:AAG5CczuITP2tJnNdMlCnRPXnvXoM6-xSUA"
@@ -134,7 +137,8 @@ def delete_pending(pending_id: int):
 def get_bottom_keyboard():
     keyboard = [
         [KeyboardButton("🔍 Искать человека"), KeyboardButton("➕ Добавить человека")],
-        [KeyboardButton("📖 Инструкция"), KeyboardButton("ℹ️ Мой Баланс")]
+        [KeyboardButton("⚡ Мощный Deep Search (10 ⭐)"), KeyboardButton("📖 Инструкция")],
+        [KeyboardButton("ℹ️ Мой Баланс")]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
@@ -143,6 +147,7 @@ async def post_init(application) -> None:
     commands = [
         BotCommand("start", "Главное меню"),
         BotCommand("help", "Инструкция"),
+        BotCommand("deepsearch", "Заказать глубокий пробив (10 ⭐)"),
         BotCommand("add", "Добавить запись на модерацию"),
         BotCommand("del", "Удалить запись (Админ)")
     ]
@@ -154,10 +159,82 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🕵️‍♂️ <b>SCOUTrr — Народная OSINT-База</b>\n\n"
         f"Добро пожаловать в коллективный Центр Поиска Данных! 🌐\n\n"
         f"• <b>🔍 Искать человека</b> — отправь номер, @username или ФИО.\n"
+        f"• <b>⚡ Мощный Deep Search</b> — приватный индивидуальный пробив по утечкам.\n"
         f"• <b>➕ Добавить человека</b> — отправить данные на проверку.\n\n"
         f"🆔 <b>Твой TG ID:</b> <code>{user.id}</code>"
     )
     await update.message.reply_text(welcome_text, parse_mode="HTML", reply_markup=get_bottom_keyboard())
+
+# --- ДИП СЕРЧ / ОПЛАТА ЗВЕЗДАМИ ---
+async def show_deep_search_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = (
+        "⚡ <b>Мощный Deep Search (Глубокий пробив)</b>\n\n"
+        "Индивидуальный поиск информации по закрытым источникам и архивным утечкам (Delivery, СДЭК, соцсети, слитые базы).\n\n"
+        "<b>По каким данным мы можем искать:</b>\n"
+        "1️⃣ 📱 <b>Номер телефона</b> (любой страны)\n"
+        "2️⃣ 🆔 <b>Telegram ID / @username</b>\n"
+        "3️⃣ 👤 <b>ФИО + Дата рождения / Город</b>\n"
+        "4️⃣ 📧 <b>Email / Почта</b>\n"
+        "5️⃣ 🚗 <b>Госномер или VIN авто</b>\n\n"
+        "💳 <b>Стоимость:</b> 10 ⭐️ Telegram Stars\n"
+        "<i>После оплаты вы отправляете вводные данные, и специалист формирует полный персональный отчёт!</i>"
+    )
+    markup = InlineKeyboardMarkup([
+        [InlineKeyboardButton("⭐ Оплатить 10 Stars и Заказать", callback_data="buy_deep_search")]
+    ])
+    await update.message.reply_text(text, parse_mode="HTML", reply_markup=markup)
+
+async def send_deep_search_invoice(chat_id, context):
+    title = "⚡ Deep Search Отчёт"
+    description = "Персональный глубокий пробив по закрытым источникам и утечкам."
+    payload = "deep_search_payment"
+    currency = "XTR"  # Telegram Stars
+    prices = [LabeledPrice("Deep Search Отчёт", 10)]
+
+    await context.bot.send_invoice(
+        chat_id=chat_id,
+        title=title,
+        description=description,
+        payload=payload,
+        provider_token="",  # Пустое поле для Telegram Stars!
+        currency=currency,
+        prices=prices
+    )
+
+async def precheckout_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.pre_checkout_query
+    if query.invoice_payload != "deep_search_payment":
+        await query.answer(ok=False, error_message="Что-то пошло не так...")
+    else:
+        await query.answer(ok=True)
+
+async def successful_payment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    user_tg = f"@{user.username}" if user.username else f"ID: {user.id}"
+
+    # Сообщение пользователю
+    await update.message.reply_text(
+        "🎉 <b>Оплата 10 ⭐ успешно получена!</b>\n\n"
+        "📩 **Отправьте прямо сюда в чат вводные данные для поиска**:\n"
+        "• Номер телефона / Telegram ID / @username / ФИО / Email / Госномер.\n\n"
+        "Ваша заявка принята! Администратор обработает запрос и отправит вам расширенный отчёт в личные сообщения.",
+        parse_mode="HTML"
+    )
+
+    # Уведомление админу
+    try:
+        await context.bot.send_message(
+            chat_id=ADMIN_ID,
+            text=(
+                f"🚨 <b>НОВЫЙ ОПЛАЧЕННЫЙ ЗАКАЗ DEEP SEARCH!</b>\n\n"
+                f"👤 <b>Покупатель:</b> {user_tg} (ID: <code>{user.id}</code>)\n"
+                f"💰 <b>Сумма:</b> 10 ⭐ (Telegram Stars)\n\n"
+                f"📥 Ожидайте от него вводные данные и отправьте ему готовое досье!"
+            ),
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        print(f"Ошибка отправки уведомления админу: {e}")
 
 # --- ДОБАВЛЕНИЕ С ПРЕМОДЕРАЦИЕЙ ---
 async def add_dossier_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -245,6 +322,9 @@ async def handle_user_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if "🔍 Искать человека" in raw_input:
         await update.message.reply_text("🔎 Отправь номер телефона, @username или ФИО для поиска:")
         return
+    elif "⚡ Мощный Deep Search" in raw_input or raw_input == "/deepsearch":
+        await show_deep_search_info(update, context)
+        return
     elif "➕ Добавить человека" in raw_input:
         instruction = (
             "➕ <b>Как предложить запись в базу:</b>\n\n"
@@ -258,7 +338,7 @@ async def handle_user_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await start(update, context)
         return
     elif "ℹ️ Мой Баланс" in raw_input:
-        await update.message.reply_text("📊 <b>Ваш баланс:</b> Безлимитный доступ.", parse_mode="HTML")
+        await update.message.reply_text("📊 <b>Ваш баланс:</b> Безлимитный доступ к базам.", parse_mode="HTML")
         return
 
     status_msg = await update.message.reply_text(f"🔎 <b>Сбор информации по запросу:</b> <code>{raw_input}</code>...", parse_mode="HTML")
@@ -336,16 +416,18 @@ async def handle_user_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
         output.extend(social_results)
         output.append("")
 
-    # ⚠️ АВТОМАТИЧЕСКАЯ ПОМЕТКА О ВОЗМОЖНОЙ СМЕНЕ ЮЗЕРНЕЙМА/ДАННЫХ ПРИ КАЖДОМ ПОИСКЕ
     output.append("⚠️ <b>Примечание:</b> Юзернеймы и контактные данные пользователей могут со временем меняться!")
 
     final_text = "\n".join(output)
     
-    reply_markup = None
+    inline_buttons = []
     if first_record_id:
-        reply_markup = InlineKeyboardMarkup([
-            [InlineKeyboardButton("⚠️ Пожаловаться на запись", callback_data=f"report_{first_record_id}")]
-        ])
+        inline_buttons.append([InlineKeyboardButton("⚠️ Пожаловаться на запись", callback_data=f"report_{first_record_id}")])
+    
+    # Кнопка быстрой покупки Deep Search прямо под каждым поиском!
+    inline_buttons.append([InlineKeyboardButton("⚡ Заказать глубокий Deep Search (10 ⭐)", callback_data="buy_deep_search")])
+
+    reply_markup = InlineKeyboardMarkup(inline_buttons)
 
     await status_msg.edit_text(final_text, parse_mode="HTML", disable_web_page_preview=True, reply_markup=reply_markup)
 
@@ -355,7 +437,10 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     data = query.data
     await query.answer()
 
-    if data.startswith("approve_"):
+    if data == "buy_deep_search":
+        await send_deep_search_invoice(query.message.chat_id, context)
+
+    elif data.startswith("approve_"):
         pending_id = int(data.split("_")[1])
         item = get_pending_by_id(pending_id)
         if item:
@@ -430,8 +515,13 @@ if __name__ == '__main__':
     
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", start))
+    app.add_handler(CommandHandler("deepsearch", show_deep_search_info))
     app.add_handler(CommandHandler("add", add_dossier_cmd))
     app.add_handler(CommandHandler("del", del_dossier_cmd))
+    
+    # Обработчики платежей Telegram Stars
+    app.add_handler(PreCheckoutQueryHandler(precheckout_callback))
+    app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
     
     app.add_handler(CallbackQueryHandler(handle_callback_query))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_user_query))
