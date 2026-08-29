@@ -17,7 +17,7 @@ from telegram.ext import (
 )
 
 # 🔑 Настройки бота и Telegram API
-TOKEN = "8408315552:AAEocZg8vBuLDXi3ZrDn6z_7pnfHkYXKuac"
+TOKEN = "8408315552:AAG3FgnLc9fU79eXQTMK1jt8WN90SGtNmQo"
 ADMIN_ID = 7786483533
 REFS_NEEDED = 5
 TIME_LIMIT_SEC = 3600
