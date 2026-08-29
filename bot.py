@@ -54,7 +54,6 @@ def init_db():
     if "birth_date" not in columns:
         cursor.execute("ALTER TABLE osint_base ADD COLUMN birth_date TEXT")
 
-    # Чистим старые тестовые фейковые записи при перезапуске
     cursor.execute("DELETE FROM osint_base WHERE phone = '+79000000000' OR fio = 'Анастасия'")
 
     conn.commit()
@@ -116,16 +115,30 @@ def search_in_local_db(query):
     conn.close()
     return res
 
+def delete_from_osint_base(query):
+    conn = sqlite3.connect("bot_base.db")
+    cursor = conn.cursor()
+    clean_q = query.replace("@", "").strip()
+    cursor.execute(
+        "DELETE FROM osint_base WHERE username = ? OR target_id = ? OR phone = ?", 
+        (clean_q, clean_q, clean_q)
+    )
+    count = cursor.rowcount
+    conn.commit()
+    conn.close()
+    return count
+
 def add_to_osint_base(target_id, username, phone, fio, birth_date, info):
     conn = sqlite3.connect("bot_base.db")
     cursor = conn.cursor()
     clean_user = username.replace("@", "").strip() if username else ""
     
-    # Удаляем старые записи по этому юзернейму/телефону перед вставкой новой
     if clean_user:
         cursor.execute("DELETE FROM osint_base WHERE username = ?", (clean_user,))
     if phone:
         cursor.execute("DELETE FROM osint_base WHERE phone = ?", (phone,))
+    if target_id:
+        cursor.execute("DELETE FROM osint_base WHERE target_id = ?", (target_id,))
         
     cursor.execute(
         "INSERT INTO osint_base (target_id, username, phone, fio, birth_date, info, status) VALUES (?, ?, ?, ?, ?, ?, 'approved')",
@@ -215,6 +228,21 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"• 🔗 <b>Партнёрка</b> — пригласи 5 друзей и получи Deep Search БЕСПЛАТНО!"
     )
     await update.message.reply_text(msg, parse_mode="HTML", reply_markup=reply_markup)
+
+async def delete_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    if not context.args:
+        await update.message.reply_text("Использование: <code>/del @username</code> или <code>/del +380...</code> или <code>/del ID</code>", parse_mode="HTML")
+        return
+    
+    target = context.args[0]
+    deleted_count = delete_from_osint_base(target)
+    
+    if deleted_count > 0:
+        await update.message.reply_text(f"🗑 Запись <code>{target}</code> успешно удалена из базы!", parse_mode="HTML")
+    else:
+        await update.message.reply_text(f"❌ Запись <code>{target}</code> не найдена в базе.", parse_mode="HTML")
 
 async def get_users_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
@@ -339,13 +367,17 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         username = re.search(r'@([a-zA-Z0-9_]{5,32})', info_text)
         phone = re.search(r'\+?\d{10,15}', info_text)
         dob = re.search(r'\b(\d{2}[\.\/]\d{2}[\.\/]\d{4})\b', info_text)
-        fio = re.search(r'(?:ФИО:?|ФИО\s*-?)\s*([А-ЯЁа-яёA-Za-z\s]+)', info_text, re.IGNORECASE)
+        
+        # Исправленный чистый парсинг ФИО
+        fio_match = re.search(r'(?:ФИО:?|ФИО\s*-?)\s*([^\n\r]+)', info_text, re.IGNORECASE)
+        fio_val = ""
+        if fio_match:
+            fio_val = fio_match.group(1).split("Юз")[0].split("Тел")[0].split("ID")[0].strip()
 
         t_id = target_id.group(1) if target_id else ""
         u_name = username.group(1) if username else ""
         ph = phone.group(0) if phone else ""
         dob_val = dob.group(1) if dob else ""
-        fio_val = fio.group(1).strip() if fio else ""
 
         add_to_osint_base(t_id, u_name, ph, fio_val, dob_val, info_text)
         await query.edit_message_text(f"✅ <b>Заявка одобрена и занесена в базу!</b>\n\n{info_text}", parse_mode="HTML")
@@ -436,6 +468,7 @@ def main():
     )
     
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("del", delete_entry))
     app.add_handler(CommandHandler("users", get_users_list))
     app.add_handler(CommandHandler("export", export_db_file))
     app.add_handler(conv_handler)
