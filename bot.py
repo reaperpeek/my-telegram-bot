@@ -1,6 +1,7 @@
 import asyncio
 import re
 import sqlite3
+import os
 import aiohttp
 import phonenumbers
 from phonenumbers import geocoder, carrier
@@ -14,24 +15,21 @@ from telegram.ext import (
     CallbackQueryHandler, ContextTypes, ConversationHandler, filters
 )
 
-TOKEN = "8408315552:AAEqn2OXCEiVMvlAjAzGF1Y8WN3O1-vsa70"
+TOKEN = "ВСТАВЬ_СЮДА_СВОЙ_ТОКЕН"
 ADMIN_ID = 7786483533
 
-# Состояния для диалога добавления человека
 WAITING_PERSON_DATA = 1
 
 # --- База данных SQLite ---
 def init_db():
     conn = sqlite3.connect("bot_base.db")
     cursor = conn.cursor()
-    # Таблица пользователей бота
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS bot_users (
             user_id INTEGER PRIMARY KEY,
             username TEXT
         )
     """)
-    # Таблица найденных/добавленных людей в OSINT-базу
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS osint_base (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -53,6 +51,14 @@ def save_bot_user(user_id, username):
     cursor.execute("INSERT OR IGNORE INTO bot_users (user_id, username) VALUES (?, ?)", (user_id, username))
     conn.commit()
     conn.close()
+
+def get_all_bot_users():
+    conn = sqlite3.connect("bot_base.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT user_id, username FROM bot_users")
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
 
 def search_in_local_db(query):
     conn = sqlite3.connect("bot_base.db")
@@ -113,7 +119,7 @@ async def check_username_via_tgstat(username: str):
             pass
     return None
 
-# --- Обработчики ---
+# --- Обработчики команд ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     save_bot_user(user.id, user.username)
@@ -130,21 +136,47 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🕵️ <b>SCOUTrr — Народная OSINT-База</b>\n"
         f"Наш сервис работает по принципу коллективного пополнения! 🌐\n\n"
         f"• 🔍 <b>Искать человека</b> — отправь номер или @username.\n"
-        f"• ➕ <b>Добавить человека</b> — внеси известную информацию (ID, ник, номер) на модерацию в базу.\n"
+        f"• ➕ <b>Добавить человека</b> — внеси известные данные (ID, ник, номер) на модерацию.\n"
         f"• ⚡ <b>Deep Search</b> — поиск по открытым реестрам.\n"
-        f"• 🔗 <b>Партнёрка</b> — приглашай друзей и открывай приватные записи!"
+        f"• 🔗 <b>Партнёрка</b> — приглашай друзей и открывай доступ!"
     )
     await update.message.reply_text(msg, parse_mode="HTML", reply_markup=reply_markup)
+
+# АДМИН-КОМАНДА: Выгрузка списка пользователей
+async def get_users_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    
+    users = get_all_bot_users()
+    if not users:
+        await update.message.reply_text("В базе пока нет пользователей.")
+        return
+        
+    text = f"👥 <b>Всего пользователей в базе: {len(users)}</b>\n\n"
+    for uid, uname in users:
+        text += f"• ID: <code>{uid}</code> | @{uname or 'без_ника'}\n"
+        
+    await update.message.reply_text(text, parse_mode="HTML")
+
+# АДМИН-КОМАНДА: Скачивание файла базы данных
+async def export_db_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+        
+    if os.path.exists("bot_base.db"):
+        await update.message.reply_document(document=open("bot_base.db", "rb"), caption="💾 Файл базы данных SQLite")
+    else:
+        await update.message.reply_text("Файл базы данных не найден.")
 
 # Процесс добавления информации на модерацию
 async def start_add_person(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "📝 <b>Отправь данные человека для добавления в базу:</b>\n\n"
-        "Формат (можно всё в одно сообщение):\n"
+        "Формат:\n"
         "<code>Юзернейм: @example\n"
         "ID: 123456789\n"
         "Телефон: +79990000000\n"
-        "Заметка: Любая дополнительная инфа</code>\n\n"
+        "Заметка: Доп. инфа</code>\n\n"
         "Для отмены отправь /cancel",
         parse_mode="HTML"
     )
@@ -154,7 +186,6 @@ async def receive_person_data(update: Update, context: ContextTypes.DEFAULT_TYPE
     text = update.message.text
     user = update.effective_user
     
-    # Кнопки для админа
     keyboard = InlineKeyboardMarkup([
         [
             InlineKeyboardButton("✅ Одобрить", callback_data=f"approve_{user.id}"),
@@ -162,10 +193,8 @@ async def receive_person_data(update: Update, context: ContextTypes.DEFAULT_TYPE
         ]
     ])
     
-    # Сохраняем во временный контекст админа
     context.bot_data[f"pending_{user.id}"] = text
 
-    # Отправляем сообщение админу
     await context.bot.send_message(
         chat_id=ADMIN_ID,
         text=f"📥 <b>Новая заявка в базу от</b> @{user.username} (ID: <code>{user.id}</code>):\n\n{text}",
@@ -173,14 +202,13 @@ async def receive_person_data(update: Update, context: ContextTypes.DEFAULT_TYPE
         reply_markup=keyboard
     )
     
-    await update.message.reply_text("✅ Спасибо! Данные отправлены на модерацию администратору.")
+    await update.message.reply_text("✅ Данные отправлены на модерацию администратору.")
     return ConversationHandler.END
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Добавление отменено.")
     return ConversationHandler.END
 
-# Обработка решений модератора
 async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -192,7 +220,6 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     info_text = context.bot_data.get(pending_key, "")
 
     if action == "approve":
-        # Парсим юзернейм, id и телефон из текста
         target_id = re.search(r'ID:\s*(\d+)', info_text, re.IGNORECASE)
         username = re.search(r'@([a-zA-Z0-9_]+)', info_text)
         phone = re.search(r'\+?\d{10,15}', info_text)
@@ -205,7 +232,7 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         await query.edit_message_text(f"✅ <b>Заявка одобрена и добавлена в базу!</b>\n\n{info_text}", parse_mode="HTML")
         try:
-            await context.bot.send_message(chat_id=int(user_id_str), text="🎉 Ваша заявка на добавление человека в базу была успешно одобрена!")
+            await context.bot.send_message(chat_id=int(user_id_str), text="🎉 Ваша заявка одобрена!")
         except Exception:
             pass
     else:
@@ -229,7 +256,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"🔗 <b>Ваша реферальная ссылка:</b>\n<code>{ref_link}</code>", parse_mode="HTML")
         return
 
-    # Проверка номера
+    # Поиск телефона
     if re.match(r'^\+?\d{10,15}$', text):
         local = search_in_local_db(text)
         res = check_phone(text)
@@ -238,16 +265,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(res, parse_mode="HTML")
         return
 
-    # Проверка юзернейма
+    # Поиск юзернейма
     if text.startswith("@") or re.match(r'^[a-zA-Z0-9_]{5,32}$', text):
         username = text if text.startswith("@") else f"@{text}"
         clean_name = username.replace("@", "")
         
         await update.message.reply_text("⏳ Идет поиск по открытым базам...")
         
-        # 1. Сначала ищем в нашей локальной модераторской базе
         local = search_in_local_db(clean_name)
-        
         if local and local[0]:
             extracted_id = local[0]
             local_info = f"Найдена запись:\n{local[3]}"
@@ -284,6 +309,8 @@ def main():
     )
     
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("users", get_users_list))
+    app.add_handler(CommandHandler("export", export_db_file))
     app.add_handler(conv_handler)
     app.add_handler(CallbackQueryHandler(admin_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
