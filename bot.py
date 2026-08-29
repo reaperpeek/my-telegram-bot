@@ -77,7 +77,7 @@ def get_or_create_user(user_id: int, referrer_id: int = None):
         cursor.execute('INSERT INTO users (user_id, referrer_id, ref_count, ref_start_time) VALUES (?, ?, 0, 0)', (user_id, actual_referrer))
         conn.commit()
         
-        # Засчитываем реферала только если пригласивший уложился в 1 час!
+        # Засчитываем реферала только если таймер у пригласившего не истек (меньше 1 часа)!
         if actual_referrer:
             cursor.execute('SELECT ref_count, ref_start_time FROM users WHERE user_id = ?', (actual_referrer,))
             ref_row = cursor.fetchone()
@@ -85,13 +85,12 @@ def get_or_create_user(user_id: int, referrer_id: int = None):
                 ref_count, ref_start_time = ref_row
                 current_time = int(time.time())
                 
-                # Проверка: активен ли таймер (прошло ли меньше 1 часа)
                 if ref_start_time > 0 and (current_time - ref_start_time) <= TIME_LIMIT_SEC:
                     new_count = ref_count + 1
                     cursor.execute('UPDATE users SET ref_count = ? WHERE user_id = ?', (new_count, actual_referrer))
                     conn.commit()
                 else:
-                    actual_referrer = None # Время истекло, не засчитываем
+                    actual_referrer = None
             
     conn.close()
     return is_new, actual_referrer
@@ -112,7 +111,7 @@ def start_or_get_ref_campaign(user_id: int):
     
     ref_count, ref_start_time = row
     
-    # Если таймер не был запущен или с момента старта прошло больше 1 часа — сбрасываем акцию
+    # Если таймер истек — сбрасываем счетчик и начинаем заново
     if ref_start_time == 0 or (current_time - ref_start_time) > TIME_LIMIT_SEC:
         cursor.execute('UPDATE users SET ref_count = 0, ref_start_time = ? WHERE user_id = ?', (current_time, user_id))
         conn.commit()
@@ -204,6 +203,26 @@ def delete_pending(pending_id: int):
     conn.commit()
     conn.close()
 
+# --- ОЦЕНКА ДАТЫ РЕГИСТРАЦИИ ПО TELEGRAM ID ---
+def estimate_tg_creation_date(user_id: int) -> str:
+    ranges = [
+        (100000000, "Январь 2015"), (200000000, "Март 2016"),
+        (300000000, "Декабрь 2016"), (400000000, "Май 2017"),
+        (500000000, "Декабрь 2017"), (700000000, "Ноябрь 2018"),
+        (1000000000, "Декабрь 2019"), (1500000000, "Февраль 2021"),
+        (2000000000, "Октябрь 2021"), (5000000000, "Февраль 2022"),
+        (6000000000, "Март 2023"), (7000000000, "Февраль 2024"),
+        (8000000000, "Май 2025"), (9000000000, "Январь 2026")
+    ]
+    if user_id < 100000000:
+        return "2013 — 2014 год"
+    prev_date = ranges[0][1]
+    for r_id, r_date in ranges:
+        if user_id <= r_id:
+            return f"Примерно {r_date}"
+        prev_date = r_date
+    return f"Примерно {prev_date} (или новее)"
+
 # --- ИНТЕРФЕЙС ---
 def get_bottom_keyboard():
     keyboard = [
@@ -238,7 +257,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     is_new, actual_referrer = get_or_create_user(user.id, referrer_id)
 
-    # Если перешли по ссылки и таймер у пригласившего ещё не истек
     if is_new and actual_referrer:
         try:
             conn = sqlite3.connect("dossier_database.db")
@@ -248,7 +266,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             conn.close()
 
             if ref_count >= REFS_NEEDED:
-                # Цель достигнута! Автоматически даем награду
                 reset_user_refs(actual_referrer)
                 await context.bot.send_message(
                     chat_id=actual_referrer,
@@ -264,7 +281,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await context.bot.send_message(
                     chat_id=actual_referrer,
                     text=(
-                        f"⏳ <b>Новый переходи по вашей ссылке!</b>\n"
+                        f"⏳ <b>Новый переход по вашей ссылке!</b>\n"
                         f"👥 Приглашено: <b>{ref_count} / {REFS_NEEDED}</b>\n"
                         f"Успейте пригласить остальных, пока не истек 1 час!"
                     ),
@@ -276,7 +293,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome_text = (
         f"🕵️‍♂️ <b>SCOUTrr — Народная OSINT-База</b>\n\n"
         f"Добро пожаловать в коллективный Центр Поиска Данных! 🌐\n\n"
-        f"• <b>🔍 Искать человека</b> — отправь номер, @username или ФИО.\n"
+        f"• <b>🔍 Искать человека</b> — отправь номер, @username, TG ID или ФИО.\n"
         f"• <b>⚡ Мощный Deep Search</b> — приватный пробив по закрытым источникам.\n"
         f"• <b>🔗 Партнёрка</b> — забери Deep Search БЕСПЛАТНО за 1 час!\n\n"
         f"🆔 <b>Твой TG ID:</b> <code>{user.id}</code>"
@@ -431,7 +448,7 @@ async def handle_user_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     raw_input = update.message.text.strip()
 
     if "🔍 Искать человека" in raw_input:
-        await update.message.reply_text("🔎 Отправь номер телефона, @username или ФИО для поиска:")
+        await update.message.reply_text("🔎 Отправь номер телефона, @username, TG ID или ФИО для поиска:")
         return
     elif "⚡ Мощный Deep Search" in raw_input or raw_input == "/deepsearch":
         await show_deep_search_info(update, context)
@@ -457,6 +474,7 @@ async def handle_user_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db_matches = search_in_db(raw_input)
     clean_phone = re.sub(r"\D", "", raw_input)
     phone_info = ""
+    
     if clean_phone:
         if len(clean_phone) == 11 and clean_phone.startswith("8"):
             clean_phone = "7" + clean_phone[1:]
@@ -472,6 +490,16 @@ async def handle_user_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     output = []
     first_record_id = None
     
+    # --- БЛОК ОПРЕДЕЛЕНИЯ ДАТЫ TELEGRAM ID ---
+    clean_tg_input = raw_input.replace("@", "").replace("tgid", "").strip()
+    if clean_tg_input.isdigit() and 5 <= len(clean_tg_input) <= 12:
+        tg_id_num = int(clean_tg_input)
+        created_date = estimate_tg_creation_date(tg_id_num)
+        output.append("📱 <b>TELEGRAM ПОЛЬЗОВАТЕЛЬ:</b>")
+        output.append(f"🆔 <b>ID:</b> <code>{tg_id_num}</code>")
+        output.append(f"📅 <b>Создан:</b> {created_date}")
+        output.append("")
+
     if db_matches:
         for record in db_matches:
             rec_id, full_name, phone, username, notes = record
@@ -490,10 +518,11 @@ async def handle_user_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 output.append(f"[+] {line}")
             output.append("")
     else:
-        output.append("📁 <b>Народная база:</b> Запись не найдена.")
-        if phone_info:
-            output.append(phone_info.strip())
-        output.append("")
+        if not (clean_tg_input.isdigit() and 5 <= len(clean_tg_input) <= 12):
+            output.append("📁 <b>Народная база:</b> Запись не найдена.")
+            if phone_info:
+                output.append(phone_info.strip())
+            output.append("")
 
     clean_user = raw_input.replace("@", "").strip()
     headers = {"User-Agent": "Mozilla/5.0"}
