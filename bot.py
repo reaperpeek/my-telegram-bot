@@ -12,7 +12,7 @@ from telegram.ext import (
 )
 
 TOKEN = "8408315552:AAG5CczuITP2tJnNdMlCnRPXnvXoM6-xSUA"
-ADMIN_IDS = [7786483533]  # 👈 СЮДА ВСТАВЬ СВОЙ ID ИЗ ШАГА 1
+ADMIN_IDS = [7786483533]
 
 USER_LIMITS = {}
 REFERRALS = {}
@@ -170,19 +170,38 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def add_dossier_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+    
     if user_id not in ADMIN_IDS:
-        await update.message.reply_text("❌ У вас нет прав админа!")
+        await update.message.reply_text(f"❌ Ваш ID ({user_id}) отсутствует в ADMIN_IDS!")
         return
-    text = " ".join(context.args)
-    parts = [p.strip() for p in text.split("|")]
-    if len(parts) < 5:
+
+    raw_text = update.message.text.partition(' ')[2].strip()
+    
+    if not raw_text or "|" not in raw_text:
         await update.message.reply_text(
-            "⚠️ **Формат:**\n`/add 380991234567 | Петров Петр | +380991234567 | @petrov | Заметка`",
+            "⚠️ **Формат команды:**\n"
+            "`/add +79991234567 | Сидоров Алексей Иванович | +79991234567 | @sidorov_test | Тестовая запись`",
             parse_mode="Markdown"
         )
         return
-    add_to_db(parts[0], parts[1], parts[2], parts[3], parts[4])
-    await update.message.reply_text(f"✅ Запись для `{parts[0]}` сохранена!", parse_mode="Markdown")
+
+    parts = [p.strip() for p in raw_text.split("|")]
+    
+    if len(parts) < 5:
+        await update.message.reply_text("⚠️ Нужно указать 5 полей через разделитель `|`!", parse_mode="Markdown")
+        return
+
+    search_key, full_name, phone, username, notes = parts[0], parts[1], parts[2], parts[3], parts[4]
+    
+    add_to_db(search_key, full_name, phone, username, notes)
+    await update.message.reply_text(
+        f"✅ **Запись сохранена!**\n\n"
+        f"🔑 **Ключ:** `{search_key}`\n"
+        f"👤 **ФИО:** {full_name}\n"
+        f"📞 **Телефон:** `{phone}`\n"
+        f"💬 **Юзернейм:** `{username}`", 
+        parse_mode="Markdown"
+    )
 
 async def run_maigret_search(username: str) -> str:
     try:
