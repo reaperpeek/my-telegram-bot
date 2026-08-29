@@ -14,7 +14,7 @@ from telegram.ext import (
     CallbackQueryHandler, PreCheckoutQueryHandler, filters, ContextTypes
 )
 
-TOKEN = "8408315552:AAEocZg8vBuLDXi3ZrDn6z_7pnfHkYXKuac"
+TOKEN = "8408315552:AAGFEo5tN92vdBa4J1E6MAsP4n24w6UELs8"
 ADMIN_ID = 7786483533
 REFS_NEEDED = 5
 TIME_LIMIT_SEC = 3600
