@@ -2,7 +2,7 @@ import asyncio
 import re
 import sqlite3
 import time
-import requests
+import aiohttp
 import phonenumbers
 from phonenumbers import geocoder, carrier
 from telegram import (
@@ -14,7 +14,7 @@ from telegram.ext import (
     CallbackQueryHandler, PreCheckoutQueryHandler, filters, ContextTypes
 )
 
-# 🔑 Токен бота
+# 🔑 Токен бота и ID админа
 TOKEN = "8408315552:AAEocZg8vBuLDXi3ZrDn6z_7pnfHkYXKuac"
 ADMIN_ID = 7786483533
 REFS_NEEDED = 5
@@ -152,15 +152,6 @@ def add_to_db(search_key: str, full_name: str, phone: str, username: str, notes:
     conn.commit()
     conn.close()
 
-def delete_from_db_by_id(rec_id: int):
-    conn = sqlite3.connect("dossier_database.db")
-    cursor = conn.cursor()
-    cursor.execute('DELETE FROM dossiers WHERE id = ?', (rec_id,))
-    rows = cursor.rowcount
-    conn.commit()
-    conn.close()
-    return rows
-
 def delete_from_db_by_key(search_key: str):
     clean_key = search_key.lower().replace("+", "").replace("@", "").strip()
     conn = sqlite3.connect("dossier_database.db")
@@ -228,7 +219,6 @@ def get_bottom_keyboard():
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 async def post_init(application) -> None:
-    init_db()
     commands = [
         BotCommand("start", "Главное меню"),
         BotCommand("help", "Инструкция"),
@@ -425,6 +415,15 @@ async def del_dossier_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("❓ Запись не найдена.", parse_mode="HTML")
 
+async def check_social_url(session, key, url):
+    try:
+        async with session.get(url, timeout=2.0) as resp:
+            if resp.status in [200, 301, 302] and "page_not_found" not in str(resp.url):
+                return f"[+] {ALL_SERVICES[key]} : Найден ({url})"
+    except Exception:
+        pass
+    return None
+
 async def handle_user_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     raw_input = update.message.text.strip()
 
@@ -455,15 +454,13 @@ async def handle_user_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     output = []
     clean_tg_input = raw_input.replace("@", "").replace("tgid", "").strip()
 
-    # 1. Поиск в Telegram + Определение даты создания
-    tg_found = False
+    # 1. Поиск в Telegram
     if clean_tg_input.isdigit() and 5 <= len(clean_tg_input) <= 12:
         tg_id_num = int(clean_tg_input)
         created_date = estimate_tg_creation_date(tg_id_num)
         output.append("📱 <b>TELEGRAM ПОЛЬЗОВАТЕЛЬ:</b>")
         output.append(f"🆔 <b>ID:</b> <code>{tg_id_num}</code>")
         output.append(f"📅 <b>Дата создания:</b> {created_date}\n")
-        tg_found = True
     else:
         try:
             tg_username = f"@{clean_tg_input}"
@@ -478,7 +475,6 @@ async def handle_user_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     output.append(f"👤 <b>Имя:</b> {name_str}")
                 output.append(f"🔗 <b>Username:</b> @{clean_tg_input}")
                 output.append(f"📅 <b>Дата создания:</b> {created_date}\n")
-                tg_found = True
         except Exception:
             pass
 
@@ -522,11 +518,9 @@ async def handle_user_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
             output.append(phone_info.strip())
         output.append("")
 
-    # 3. Соцсети
+    # 3. Асинхронный поиск по соцсетям (без зависания сервера)
     clean_user = raw_input.replace("@", "").strip()
     headers = {"User-Agent": "Mozilla/5.0"}
-    social_results = []
-    
     service_urls = {
         "tg": f"https://t.me/{clean_user}",
         "vk": f"https://vk.com/{clean_user}",
@@ -536,17 +530,15 @@ async def handle_user_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "gh": f"https://github.com/{clean_user}"
     }
 
-    for key in ["tg", "vk", "yt", "tt", "stm", "gh"]:
-        try:
-            res = requests.get(service_urls[key], headers=headers, timeout=1.5)
-            if res.status_code in [200, 301, 302] and "page_not_found" not in res.url:
-                social_results.append(f"[+] {ALL_SERVICES[key]} : Найден ({service_urls[key]})")
-        except Exception:
-            pass
+    async with aiohttp.ClientSession(headers=headers) as session:
+        tasks = [check_social_url(session, k, service_urls[k]) for k in service_urls]
+        social_results = await asyncio.gather(*tasks)
 
-    if social_results:
+    valid_socials = [res for res in social_results if res]
+
+    if valid_socials:
         output.append("🌐 <b>Найденные Соцсети:</b>")
-        output.extend(social_results)
+        output.extend(valid_socials)
         output.append("")
 
     output.append("⚠️ Данные могут со временем меняться.")
@@ -561,7 +553,6 @@ async def handle_user_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     data = query.data
-    user = query.from_user
     await query.answer()
 
     if data == "buy_deep_search":
@@ -584,11 +575,11 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             await query.edit_message_text(f"{query.message.text}\n\n❌ <b>ОТКЛОНЕНО</b>", parse_mode="HTML")
 
     elif data.startswith("report_"):
-        rec_id = int(data.split("_")[1])
         await query.edit_message_reply_markup(reply_markup=None)
         await context.bot.send_message(chat_id=query.message.chat_id, text="🚨 Жалоба отправлена модераторам.", parse_mode="HTML")
 
 if __name__ == '__main__':
+    init_db()  # База гарантированно инициализируется до запуска бота
     app = ApplicationBuilder().token(TOKEN).post_init(post_init).build()
     
     app.add_handler(CommandHandler("start", start))
