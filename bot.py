@@ -16,7 +16,7 @@ from telegram.ext import (
     PreCheckoutQueryHandler
 )
 
-TOKEN = "8408315552:AAGhsyfE7pxE1iK8ei5ZNNaiIrWKYU4oIKs"
+TOKEN = "ВСТАВЬ_СЮДА_СВОЙ_ТОКЕН"
 ADMIN_ID = 7786483533
 
 WAITING_PERSON_DATA = 1
@@ -41,22 +41,32 @@ def init_db():
             target_id TEXT,
             username TEXT,
             phone TEXT,
+            fio TEXT,
+            birth_date TEXT,
             info TEXT,
             status TEXT DEFAULT 'approved'
         )
     """)
     
-    # --- ГОТОВЫЙ СПИСОК ЛЮДЕЙ ДЛЯ АВТОЗАГРУЗКИ ---
-    # Сюда сможешь вставлять готовых людей списком:
+    # Автоматическое добавление новых колонок, если база уже существовала старой версии
+    cursor.execute("PRAGMA table_info(osint_base)")
+    columns = [column[1] for column in cursor.fetchall()]
+    if "fio" not in columns:
+        cursor.execute("ALTER TABLE osint_base ADD COLUMN fio TEXT")
+    if "birth_date" not in columns:
+        cursor.execute("ALTER TABLE osint_base ADD COLUMN birth_date TEXT")
+
+    # --- НАЧАЛЬНЫЙ СПИСОК ДЛЯ АВТОЗАГРУЗКИ ---
+    # Формат: (target_id, username, phone, fio, birth_date, info)
     initial_people = [
-        ("987654321", "anastasiia_riii", "+79000000000", "Пример карточки Анастасии"),
+        ("987654321", "anastasiia_riii", "+79000000000", "Анастасия", "15.08.1998", "Запись из локальной базы"),
     ]
     
-    for t_id, uname, ph, inf in initial_people:
+    for t_id, uname, ph, fio_val, dob_val, inf in initial_people:
         clean_u = uname.replace("@", "").strip() if uname else ""
         cursor.execute(
-            "INSERT OR IGNORE INTO osint_base (target_id, username, phone, info, status) VALUES (?, ?, ?, ?, 'approved')",
-            (t_id, clean_u, ph, inf)
+            "INSERT OR IGNORE INTO osint_base (target_id, username, phone, fio, birth_date, info, status) VALUES (?, ?, ?, ?, ?, ?, 'approved')",
+            (t_id, clean_u, ph, fio_val, dob_val, inf)
         )
         
     conn.commit()
@@ -111,26 +121,28 @@ def search_in_local_db(query):
     cursor = conn.cursor()
     clean_q = query.replace("@", "").strip()
     cursor.execute(
-        "SELECT target_id, username, phone, info FROM osint_base WHERE (username = ? OR target_id = ? OR phone = ?) AND status = 'approved'", 
+        "SELECT target_id, username, phone, fio, birth_date, info FROM osint_base WHERE (username = ? OR target_id = ? OR phone = ?) AND status = 'approved'", 
         (clean_q, clean_q, clean_q)
     )
     res = cursor.fetchone()
     conn.close()
     return res
 
-def add_to_osint_base(target_id, username, phone, info):
+def add_to_osint_base(target_id, username, phone, fio, birth_date, info):
     conn = sqlite3.connect("bot_base.db")
     cursor = conn.cursor()
     clean_user = username.replace("@", "").strip() if username else ""
     cursor.execute(
-        "INSERT INTO osint_base (target_id, username, phone, info, status) VALUES (?, ?, ?, ?, 'approved')",
-        (target_id, clean_user, phone, info)
+        "INSERT INTO osint_base (target_id, username, phone, fio, birth_date, info, status) VALUES (?, ?, ?, ?, ?, ?, 'approved')",
+        (target_id, clean_user, phone, fio, birth_date, info)
     )
     conn.commit()
     conn.close()
 
-# --- Красивое форматирование карточки ---
-def format_local_profile(target_id, username, phone, info):
+# --- Форматирование красивой карточки ---
+def format_local_profile(target_id, username, phone, fio, birth_date, info):
+    clean_fio = fio.strip() if fio else "<i>Не указано</i>"
+    clean_dob = birth_date.strip() if birth_date else "<i>Не указана</i>"
     clean_user = f"@{username}" if username and not username.startswith("@") else (username or "<i>Не указан</i>")
     clean_id = f"<code>{target_id}</code>" if target_id else "<i>Не указан</i>"
     clean_phone = f"<code>{phone}</code>" if phone else "<i>Не указан</i>"
@@ -139,7 +151,9 @@ def format_local_profile(target_id, username, phone, info):
     return (
         f"📂 <b>КАРТОЧКА ИЗ ЛОКАЛЬНОЙ БАЗЫ</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"👤 <b>Юзернейм:</b> {clean_user}\n"
+        f"👤 <b>ФИО:</b> {clean_fio}\n"
+        f"🎂 <b>Дата рождения:</b> {clean_dob}\n"
+        f"🔗 <b>Юзернейм:</b> {clean_user}\n"
         f"🆔 <b>Telegram ID:</b> {clean_id}\n"
         f"📞 <b>Телефон:</b> {clean_phone}\n"
         f"📝 <b>Заметка / Инфо:</b>\n{clean_info}\n"
@@ -295,7 +309,7 @@ async def successful_payment_callback(update: Update, context: ContextTypes.DEFA
 async def start_add_person(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "📝 <b>Отправь данные человека для добавления в базу:</b>\n\n"
-        "Отправь информацию в любом удобном виде. Бот сам найдёт юзернейм, ID и телефон!\n\n"
+        "Отправь информацию в удобном виде (ФИО, дата рождения, @username, телефон, ID).\n\n"
         "Для отмены отправь: /cancel",
         parse_mode="HTML"
     )
@@ -332,17 +346,21 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     info_text = context.bot_data.get(pending_key, "")
 
     if action == "approve":
-        # Умный автоматический поиск данных в тексте заявки
+        # Умный извлекатель данных из текста
         target_id = re.search(r'(?:ID:?|id:?|\b)\s*(\d{7,11})\b', info_text)
         username = re.search(r'@([a-zA-Z0-9_]{5,32})', info_text)
         phone = re.search(r'\+?\d{10,15}', info_text)
-        
+        dob = re.search(r'\b(\d{2}[\.\/]\d{2}[\.\/]\d{4})\b', info_text)
+        fio = re.search(r'(?:ФИО:?|ФИО\s*-?)\s*([А-ЯЁа-яёA-Za-z\s]+)', info_text, re.IGNORECASE)
+
         t_id = target_id.group(1) if target_id else ""
         u_name = username.group(1) if username else ""
         ph = phone.group(0) if phone else ""
-        
-        add_to_osint_base(t_id, u_name, ph, info_text)
-        await query.edit_message_text(f"✅ <b>Заявка одобрена и оформлена в базу!</b>\n\n{info_text}", parse_mode="HTML")
+        dob_val = dob.group(1) if dob else ""
+        fio_val = fio.group(1).strip() if fio else ""
+
+        add_to_osint_base(t_id, u_name, ph, fio_val, dob_val, info_text)
+        await query.edit_message_text(f"✅ <b>Заявка одобрена и занесена в базу!</b>\n\n{info_text}", parse_mode="HTML")
         try:
             await context.bot.send_message(int(user_id_str), "🎉 Ваша заявка одобрена!")
         except Exception:
@@ -377,19 +395,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # Поиск телефона
+    # Поиск по номеру
     if re.match(r'^\+?\d{10,15}$', text):
         local = search_in_local_db(text)
         phone_info = check_phone(text)
         if local:
-            local_card = format_local_profile(local[0], local[1], local[2], local[3])
+            local_card = format_local_profile(local[0], local[1], local[2], local[3], local[4], local[5])
             res = f"{phone_info}\n\n{local_card}"
         else:
             res = f"{phone_info}\n\n📂 <b>Локальная база:</b> <i>Данных не найдено.</i>"
         await update.message.reply_text(res, parse_mode="HTML")
         return
 
-    # Поиск юзернейма
+    # Поиск по юзернейму
     if text.startswith("@") or re.match(r'^[a-zA-Z0-9_]{5,32}$', text):
         username = text if text.startswith("@") else f"@{text}"
         clean_name = username.replace("@", "")
@@ -398,7 +416,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         local = search_in_local_db(clean_name)
         if local:
-            local_card = format_local_profile(local[0], local[1], local[2], local[3])
+            local_card = format_local_profile(local[0], local[1], local[2], local[3], local[4], local[5])
             extracted_id = local[0] or await check_username_via_tgstat(clean_name)
         else:
             local_card = "📂 <b>Локальная база:</b> <i>Запись не найдена.</i>"
@@ -446,3 +464,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    
