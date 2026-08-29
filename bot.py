@@ -5,6 +5,7 @@ import time
 import aiohttp
 import phonenumbers
 from phonenumbers import geocoder, carrier
+from pyrogram import Client
 from telegram import (
     Update, ReplyKeyboardMarkup, KeyboardButton, 
     InlineKeyboardMarkup, InlineKeyboardButton, BotCommand, LabeledPrice
@@ -14,10 +15,18 @@ from telegram.ext import (
     CallbackQueryHandler, PreCheckoutQueryHandler, filters, ContextTypes
 )
 
-TOKEN = "8408315552:AAGFEo5tN92vdBa4J1E6MAsP4n24w6UELs8"
+# 🔑 Настройки бота и Telegram API
+TOKEN = "8408315552:AAEocZg8vBuLDXi3ZrDn6z_7pnfHkYXKuac"
 ADMIN_ID = 7786483533
 REFS_NEEDED = 5
 TIME_LIMIT_SEC = 3600
+
+# ⚙️ Вставишь сюда свои данные с my.telegram.org:
+API_ID = 32806507  # Замени на свой api_id (число)
+API_HASH = "a5a62b1c8051c9a79447e84d5adc70bc"  # Замени на свой api_hash (строка)
+
+# Клиент Pyrogram для поиска ID любого юзера
+user_client = Client("user_session", api_id=API_ID, api_hash=API_HASH, in_memory=True)
 
 ALL_SERVICES = {
     "tg": "Telegram", "yt": "YouTube", "tt": "TikTok", "vk": "VK",
@@ -224,6 +233,11 @@ async def post_init(application) -> None:
         BotCommand("del", "Удалить запись (Админ)")
     ]
     await application.bot.set_my_commands(commands)
+    # Запуск Pyrogram клиета при старте
+    try:
+        await user_client.start()
+    except Exception as e:
+        print(f"Ошибка запуска Pyrogram: {e}")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -453,31 +467,39 @@ async def handle_user_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     output = []
     clean_tg_input = raw_input.replace("@", "").replace("tgid", "").strip()
 
-    # 1. Поиск по Telegram
+    # 1. Точный поиск Telegram ID через Pyrogram (Userbot)
     if clean_tg_input.isdigit() and 5 <= len(clean_tg_input) <= 12:
         tg_id_num = int(clean_tg_input)
         created_date = estimate_tg_creation_date(tg_id_num)
         output.append("📱 <b>TELEGRAM ПОЛЬЗОВАТЕЛЬ:</b>")
         output.append(f"🆔 <b>ID:</b> <code>{tg_id_num}</code>")
-        output.append(f"📅 <b>Дата регистрации аккаунта:</b> {created_date}\n")
-    elif len(clean_tg_input) >= 4 and not " " in clean_tg_input:
+        output.append(f"📅 <b>Дата регистрации:</b> {created_date}\n")
+    elif len(clean_tg_input) >= 3 and not " " in clean_tg_input:
         output.append("📱 <b>TELEGRAM ПОЛЬЗОВАТЕЛЬ:</b>")
         output.append(f"🔗 <b>Прямая ссылка:</b> https://t.me/{clean_tg_input}")
+        
+        found_user = None
         try:
-            chat_info = await context.bot.get_chat(f"@{clean_tg_input}")
-            if chat_info:
-                tg_id_num = chat_info.id
-                created_date = estimate_tg_creation_date(tg_id_num)
-                output.append(f"🆔 <b>ID:</b> <code>{tg_id_num}</code>")
-                if chat_info.first_name:
-                    name_str = chat_info.first_name + (f" {chat_info.last_name}" if chat_info.last_name else "")
-                    output.append(f"👤 <b>Имя:</b> {name_str}")
-                output.append(f"📅 <b>Дата регистрации аккаунта:</b> {created_date}")
+            # Запрос через Userbot
+            found_user = await user_client.get_users(clean_tg_input)
         except Exception:
-            output.append("ℹ️ <i>Приватный профиль (ID скрыт настройками)</i>")
+            pass
+
+        if found_user:
+            tg_id_num = found_user.id
+            created_date = estimate_tg_creation_date(tg_id_num)
+            output.append(f"🆔 <b>ID:</b> <code>{tg_id_num}</code>")
+            
+            full_name_str = (found_user.first_name or "") + (" " + found_user.last_name if found_user.last_name else "")
+            if full_name_str.strip():
+                output.append(f"👤 <b>Имя:</b> {full_name_str.strip()}")
+            
+            output.append(f"📅 <b>Дата регистрации:</b> {created_date}")
+        else:
+            output.append("ℹ️ <i>Пользователь не найден или логин свободен</i>")
         output.append("")
 
-    # 2. Поиск в локальной БД + Данные мобильного оператора
+    # 2. Поиск в БД и сотовый оператор
     db_matches = search_in_db(raw_input)
     clean_phone = re.sub(r"\D", "", raw_input)
     phone_info = ""
@@ -490,7 +512,7 @@ async def handle_user_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if phonenumbers.is_valid_number(parsed_num):
                 c_name = geocoder.description_for_number(parsed_num, "ru") or "Неизвестно"
                 op_name = carrier.name_for_number(parsed_num, "ru") or "Частный оператор"
-                phone_info = f"[+] Страна регистрации: {c_name}\n[+] Сотовый оператор: {op_name}\n"
+                phone_info = f"[+] Страна: {c_name}\n[+] Оператор: {op_name}\n"
         except Exception:
             pass
 
@@ -502,14 +524,14 @@ async def handle_user_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 first_record_id = rec_id
             clean_user_display = username.lstrip("@") if username else "Не указан"
             
-            output.append("🕵️‍♂️ <b>Найдена запись в базе:</b>")
+            output.append("🕵️‍♂️ <b>Результат из базы:</b>")
             output.append(f"[+] ФИО: {full_name}")
             output.append(f"[+] Телефон: {phone}")
-            output.append(f"[+] Псевдоним: @{clean_user_display}")
+            output.append(f"[+] Юзернейм: @{clean_user_display}")
             if phone_info:
                 output.append(phone_info.strip())
             for line in [n.strip() for n in re.split(r'\||\n', notes) if n.strip()]:
-                output.append(f"[+] Заметка: {line}")
+                output.append(f"[+] Инфо: {line}")
             output.append("")
     else:
         output.append("📁 <b>Локальная база:</b> Данных не найдено.")
@@ -517,7 +539,7 @@ async def handle_user_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
             output.append(phone_info.strip())
         output.append("")
 
-    # 3. Асинхронный сканер внешних профилей
+    # 3. Сканер по внешним ресурсам
     clean_user = raw_input.replace("@", "").strip()
     if len(clean_user) >= 3 and not " " in clean_user:
         service_urls = {
@@ -540,7 +562,6 @@ async def handle_user_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
             output.extend(valid_socials)
             output.append("")
 
-    # ОБНОВЛЕННАЯ СТРОКА:
     output.append("💡 <i>Данные получены из открытых и локальных источников и могут со временем обновляться.</i>")
 
     inline_buttons = []
