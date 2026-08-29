@@ -77,7 +77,6 @@ def get_or_create_user(user_id: int, referrer_id: int = None):
         cursor.execute('INSERT INTO users (user_id, referrer_id, ref_count, ref_start_time) VALUES (?, ?, 0, 0)', (user_id, actual_referrer))
         conn.commit()
         
-        # Засчитываем реферала только если таймер у пригласившего не истек (меньше 1 часа)!
         if actual_referrer:
             cursor.execute('SELECT ref_count, ref_start_time FROM users WHERE user_id = ?', (actual_referrer,))
             ref_row = cursor.fetchone()
@@ -111,7 +110,6 @@ def start_or_get_ref_campaign(user_id: int):
     
     ref_count, ref_start_time = row
     
-    # Если таймер истек — сбрасываем счетчик и начинаем заново
     if ref_start_time == 0 or (current_time - ref_start_time) > TIME_LIMIT_SEC:
         cursor.execute('UPDATE users SET ref_count = 0, ref_start_time = ? WHERE user_id = ?', (current_time, user_id))
         conn.commit()
@@ -215,13 +213,13 @@ def estimate_tg_creation_date(user_id: int) -> str:
         (8000000000, "Май 2025"), (9000000000, "Январь 2026")
     ]
     if user_id < 100000000:
-        return "2013 — 2014 год"
+        return "2013 — 2014 гг."
     prev_date = ranges[0][1]
     for r_id, r_date in ranges:
         if user_id <= r_id:
-            return f"Примерно {r_date}"
+            return f"~ {r_date} г."
         prev_date = r_date
-    return f"Примерно {prev_date} (или новее)"
+    return f"~ {prev_date} г."
 
 # --- ИНТЕРФЕЙС ---
 def get_bottom_keyboard():
@@ -300,7 +298,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(welcome_text, parse_mode="HTML", reply_markup=get_bottom_keyboard())
 
-# --- ПАРТНЁРСКАЯ ПРОГРАММА С ТАЙМЕРОМ ---
 async def show_ref_program(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     bot_info = await context.bot.get_me()
@@ -326,7 +323,6 @@ async def show_ref_program(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(text, parse_mode="HTML")
 
-# --- ДИП СЕРЧ / ОПЛАТА ЗВЕЗДАМИ ---
 async def show_deep_search_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
         "⚡ <b>Мощный Deep Search (Глубокий пробив)</b>\n\n"
@@ -391,7 +387,6 @@ async def successful_payment_callback(update: Update, context: ContextTypes.DEFA
     except Exception as e:
         print(f"Ошибка отправки уведомления админу: {e}")
 
-# --- ДОБАВЛЕНИЕ С ПРЕМОДЕРАЦИЕЙ ---
 async def add_dossier_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     full_text = update.message.text
@@ -433,7 +428,6 @@ async def add_dossier_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         print(f"Ошибка админа: {e}")
 
-# --- УДАЛЕНИЕ (АДМИН) ---
 async def del_dossier_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
@@ -471,6 +465,38 @@ async def handle_user_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     status_msg = await update.message.reply_text(f"🔎 <b>Сбор информации:</b> <code>{raw_input}</code>...", parse_mode="HTML")
 
+    output = []
+    clean_tg_input = raw_input.replace("@", "").replace("tgid", "").strip()
+
+    # --- 1. TELEGRAM API / ОПРЕДЕЛЕНИЕ ID И ДАТЫ ---
+    if clean_tg_input.isdigit() and 5 <= len(clean_tg_input) <= 12:
+        tg_id_num = int(clean_tg_input)
+        created_date = estimate_tg_creation_date(tg_id_num)
+        output.append("📱 <b>TELEGRAM ПОЛЬЗОВАТЕЛЬ:</b>")
+        output.append(f"🆔 <b>ID:</b> <code>{tg_id_num}</code>")
+        output.append(f"📅 <b>Создан:</b> {created_date}")
+        output.append("")
+
+    elif raw_input.startswith("@") or not raw_input.isdigit():
+        try:
+            tg_username = f"@{clean_tg_input}"
+            chat_info = await context.bot.get_chat(tg_username)
+            if chat_info and chat_info.id:
+                tg_id_num = chat_info.id
+                created_date = estimate_tg_creation_date(tg_id_num)
+                
+                output.append("📱 <b>TELEGRAM ПОЛЬЗОВАТЕЛЬ:</b>")
+                output.append(f"🆔 <b>ID:</b> <code>{tg_id_num}</code>")
+                if chat_info.first_name:
+                    name_str = chat_info.first_name + (f" {chat_info.last_name}" if chat_info.last_name else "")
+                    output.append(f"👤 <b>Имя:</b> {name_str}")
+                output.append(f"🔗 <b>Username:</b> @{clean_tg_input}")
+                output.append(f"📅 <b>Создан:</b> {created_date}")
+                output.append("")
+        except Exception:
+            pass
+
+    # --- 2. НАРОДНАЯ БАЗА И ОПЕРАТОР ---
     db_matches = search_in_db(raw_input)
     clean_phone = re.sub(r"\D", "", raw_input)
     phone_info = ""
@@ -487,19 +513,7 @@ async def handle_user_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
 
-    output = []
     first_record_id = None
-    
-    # --- БЛОК ОПРЕДЕЛЕНИЯ ДАТЫ TELEGRAM ID ---
-    clean_tg_input = raw_input.replace("@", "").replace("tgid", "").strip()
-    if clean_tg_input.isdigit() and 5 <= len(clean_tg_input) <= 12:
-        tg_id_num = int(clean_tg_input)
-        created_date = estimate_tg_creation_date(tg_id_num)
-        output.append("📱 <b>TELEGRAM ПОЛЬЗОВАТЕЛЬ:</b>")
-        output.append(f"🆔 <b>ID:</b> <code>{tg_id_num}</code>")
-        output.append(f"📅 <b>Создан:</b> {created_date}")
-        output.append("")
-
     if db_matches:
         for record in db_matches:
             rec_id, full_name, phone, username, notes = record
@@ -518,12 +532,12 @@ async def handle_user_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 output.append(f"[+] {line}")
             output.append("")
     else:
-        if not (clean_tg_input.isdigit() and 5 <= len(clean_tg_input) <= 12):
-            output.append("📁 <b>Народная база:</b> Запись не найдена.")
-            if phone_info:
-                output.append(phone_info.strip())
-            output.append("")
+        output.append("📁 <b>Народная база:</b> Запись не найдена.")
+        if phone_info:
+            output.append(phone_info.strip())
+        output.append("")
 
+    # --- 3. СОЦСЕТИ ---
     clean_user = raw_input.replace("@", "").strip()
     headers = {"User-Agent": "Mozilla/5.0"}
     social_results = []
@@ -559,7 +573,6 @@ async def handle_user_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await status_msg.edit_text("\n".join(output), parse_mode="HTML", disable_web_page_preview=True, reply_markup=InlineKeyboardMarkup(inline_buttons))
 
-# --- ОБРАБОТКА НАЖАТИЙ КНОПОК ---
 async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     data = query.data
