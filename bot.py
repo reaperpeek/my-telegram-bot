@@ -14,7 +14,6 @@ from telegram.ext import (
     CallbackQueryHandler, PreCheckoutQueryHandler, filters, ContextTypes
 )
 
-# 🔑 Токен бота и ID админа
 TOKEN = "8408315552:AAEocZg8vBuLDXi3ZrDn6z_7pnfHkYXKuac"
 ADMIN_ID = 7786483533
 REFS_NEEDED = 5
@@ -22,8 +21,7 @@ TIME_LIMIT_SEC = 3600
 
 ALL_SERVICES = {
     "tg": "Telegram", "yt": "YouTube", "tt": "TikTok", "vk": "VK",
-    "pin": "Pinterest", "red": "Reddit", "stm": "Steam", "gh": "GitHub",
-    "tw": "Twitch", "rbl": "Roblox", "hb": "Habr"
+    "pin": "Pinterest", "red": "Reddit", "stm": "Steam", "gh": "GitHub"
 }
 
 def init_db():
@@ -98,7 +96,6 @@ def start_or_get_ref_campaign(user_id: int):
     cursor = conn.cursor()
     cursor.execute('SELECT ref_count, ref_start_time FROM users WHERE user_id = ?', (user_id,))
     row = cursor.fetchone()
-    
     current_time = int(time.time())
     
     if not row:
@@ -108,7 +105,6 @@ def start_or_get_ref_campaign(user_id: int):
         return 0, current_time
     
     ref_count, ref_start_time = row
-    
     if ref_start_time == 0 or (current_time - ref_start_time) > TIME_LIMIT_SEC:
         cursor.execute('UPDATE users SET ref_count = 0, ref_start_time = ? WHERE user_id = ?', (current_time, user_id))
         conn.commit()
@@ -273,7 +269,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     parse_mode="HTML"
                 )
         except Exception as e:
-            print(f"Ошибка отправки уведомления: {e}")
+            print(f"Ошибка уведомления: {e}")
 
     welcome_text = (
         f"🕵️‍♂️ <b>SCOUTrr — Народная OSINT-База</b>\n\n"
@@ -417,8 +413,11 @@ async def del_dossier_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def check_social_url(session, key, url):
     try:
-        async with session.get(url, timeout=2.0) as resp:
-            if resp.status in [200, 301, 302] and "page_not_found" not in str(resp.url):
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+        async with session.get(url, headers=headers, timeout=2.5, allow_redirects=True) as resp:
+            if resp.status == 200 and "not_found" not in str(resp.url).lower():
                 return f"[+] {ALL_SERVICES[key]} : Найден ({url})"
     except Exception:
         pass
@@ -454,31 +453,31 @@ async def handle_user_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     output = []
     clean_tg_input = raw_input.replace("@", "").replace("tgid", "").strip()
 
-    # 1. Поиск в Telegram
+    # 1. Поиск по Telegram
     if clean_tg_input.isdigit() and 5 <= len(clean_tg_input) <= 12:
         tg_id_num = int(clean_tg_input)
         created_date = estimate_tg_creation_date(tg_id_num)
         output.append("📱 <b>TELEGRAM ПОЛЬЗОВАТЕЛЬ:</b>")
         output.append(f"🆔 <b>ID:</b> <code>{tg_id_num}</code>")
-        output.append(f"📅 <b>Дата создания:</b> {created_date}\n")
-    else:
+        output.append(f"📅 <b>Дата регистрации аккаунта:</b> {created_date}\n")
+    elif len(clean_tg_input) >= 4 and not " " in clean_tg_input:
+        output.append("📱 <b>TELEGRAM ПОЛЬЗОВАТЕЛЬ:</b>")
+        output.append(f"🔗 <b>Прямая ссылка:</b> https://t.me/{clean_tg_input}")
         try:
-            tg_username = f"@{clean_tg_input}"
-            chat_info = await context.bot.get_chat(tg_username)
+            chat_info = await context.bot.get_chat(f"@{clean_tg_input}")
             if chat_info:
                 tg_id_num = chat_info.id
                 created_date = estimate_tg_creation_date(tg_id_num)
-                output.append("📱 <b>TELEGRAM ПОЛЬЗОВАТЕЛЬ:</b>")
                 output.append(f"🆔 <b>ID:</b> <code>{tg_id_num}</code>")
                 if chat_info.first_name:
                     name_str = chat_info.first_name + (f" {chat_info.last_name}" if chat_info.last_name else "")
                     output.append(f"👤 <b>Имя:</b> {name_str}")
-                output.append(f"🔗 <b>Username:</b> @{clean_tg_input}")
-                output.append(f"📅 <b>Дата создания:</b> {created_date}\n")
+                output.append(f"📅 <b>Дата регистрации аккаунта:</b> {created_date}")
         except Exception:
-            pass
+            output.append("ℹ️ <i>Приватный профиль (ID скрыт настройками)</i>")
+        output.append("")
 
-    # 2. Поиск в БД и оператор связи
+    # 2. Поиск в локальной БД + Данные мобильного оператора
     db_matches = search_in_db(raw_input)
     clean_phone = re.sub(r"\D", "", raw_input)
     phone_info = ""
@@ -490,8 +489,8 @@ async def handle_user_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parsed_num = phonenumbers.parse(f"+{clean_phone}", None)
             if phonenumbers.is_valid_number(parsed_num):
                 c_name = geocoder.description_for_number(parsed_num, "ru") or "Неизвестно"
-                op_name = carrier.name_for_number(parsed_num, "ru") or "Частный"
-                phone_info = f"[+] С т р а н а : {c_name}\n[+] О п е р а т о р : {op_name}\n"
+                op_name = carrier.name_for_number(parsed_num, "ru") or "Частный оператор"
+                phone_info = f"[+] Страна регистрации: {c_name}\n[+] Сотовый оператор: {op_name}\n"
         except Exception:
             pass
 
@@ -503,45 +502,46 @@ async def handle_user_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 first_record_id = rec_id
             clean_user_display = username.lstrip("@") if username else "Не указан"
             
-            output.append("🕵️‍♂️ <b>Результат из Народной Базы:</b>")
-            output.append(f"[+] Ф И О : {full_name}")
-            output.append(f"[+] Н о м е р : {phone}")
-            output.append(f"[+] Ю з е р н е й м : @{clean_user_display}")
+            output.append("🕵️‍♂️ <b>Найдена запись в базе:</b>")
+            output.append(f"[+] ФИО: {full_name}")
+            output.append(f"[+] Телефон: {phone}")
+            output.append(f"[+] Псевдоним: @{clean_user_display}")
             if phone_info:
                 output.append(phone_info.strip())
             for line in [n.strip() for n in re.split(r'\||\n', notes) if n.strip()]:
-                output.append(f"[+] {line}")
+                output.append(f"[+] Заметка: {line}")
             output.append("")
     else:
-        output.append("📁 <b>Народная база:</b> Запись не найдена.")
+        output.append("📁 <b>Локальная база:</b> Данных не найдено.")
         if phone_info:
             output.append(phone_info.strip())
         output.append("")
 
-    # 3. Асинхронный поиск по соцсетям (без зависания сервера)
+    # 3. Асинхронный сканер внешних профилей
     clean_user = raw_input.replace("@", "").strip()
-    headers = {"User-Agent": "Mozilla/5.0"}
-    service_urls = {
-        "tg": f"https://t.me/{clean_user}",
-        "vk": f"https://vk.com/{clean_user}",
-        "yt": f"https://www.youtube.com/@{clean_user}",
-        "tt": f"https://www.tiktok.com/@{clean_user}",
-        "stm": f"https://steamcommunity.com/id/{clean_user}",
-        "gh": f"https://github.com/{clean_user}"
-    }
+    if len(clean_user) >= 3 and not " " in clean_user:
+        service_urls = {
+            "tg": f"https://t.me/{clean_user}",
+            "vk": f"https://vk.com/{clean_user}",
+            "yt": f"https://www.youtube.com/@{clean_user}",
+            "tt": f"https://www.tiktok.com/@{clean_user}",
+            "stm": f"https://steamcommunity.com/id/{clean_user}",
+            "gh": f"https://github.com/{clean_user}"
+        }
 
-    async with aiohttp.ClientSession(headers=headers) as session:
-        tasks = [check_social_url(session, k, service_urls[k]) for k in service_urls]
-        social_results = await asyncio.gather(*tasks)
+        async with aiohttp.ClientSession() as session:
+            tasks = [check_social_url(session, k, service_urls[k]) for k in service_urls]
+            social_results = await asyncio.gather(*tasks)
 
-    valid_socials = [res for res in social_results if res]
+        valid_socials = [res for res in social_results if res]
 
-    if valid_socials:
-        output.append("🌐 <b>Найденные Соцсети:</b>")
-        output.extend(valid_socials)
-        output.append("")
+        if valid_socials:
+            output.append("🌐 <b>Обнаруженные веб-ресурсы:</b>")
+            output.extend(valid_socials)
+            output.append("")
 
-    output.append("⚠️ Данные могут со временем меняться.")
+    # ОБНОВЛЕННАЯ СТРОКА:
+    output.append("💡 <i>Данные получены из открытых и локальных источников и могут со временем обновляться.</i>")
 
     inline_buttons = []
     if first_record_id:
@@ -579,7 +579,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         await context.bot.send_message(chat_id=query.message.chat_id, text="🚨 Жалоба отправлена модераторам.", parse_mode="HTML")
 
 if __name__ == '__main__':
-    init_db()  # База гарантированно инициализируется до запуска бота
+    init_db()
     app = ApplicationBuilder().token(TOKEN).post_init(post_init).build()
     
     app.add_handler(CommandHandler("start", start))
