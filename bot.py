@@ -16,7 +16,7 @@ from telegram.ext import (
     PreCheckoutQueryHandler
 )
 
-TOKEN = "AAHybi9FrwMgrJhkIdFsHypPYp7XA2Py-gk"
+TOKEN = "AAFswxkq2cabG-xpUUUsF1iCl3co4E0yXjo"
 ADMIN_ID = 7786483533
 
 WAITING_PERSON_DATA = 1
