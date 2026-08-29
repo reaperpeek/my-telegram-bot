@@ -15,7 +15,6 @@ TOKEN = "8408315552:AAG5CczuITP2tJnNdMlCnRPXnvXoM6-xSUA"
 ADMIN_IDS = [7786483533]
 
 USER_LIMITS = {}
-USER_SELECTIONS = {}
 DEFAULT_FREE_LIMIT = 5
 
 ALL_SERVICES = {
@@ -109,21 +108,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     limit = get_user_limit(user.id)
     welcome_text = (
-        f"🕵️‍♂️ **Добро пожаловать в OSINT Sherlock Bot!**\n\n"
-        f"💡 **Как работать с ботом:**\n"
-        f"1️⃣ Напишите в чат любой запрос (ФИО, номер телефона или @username).\n"
-        f"2️⃣ Бот спросит, **какой именно тип поиска** вы хотите выполнить.\n"
-        f"3️⃣ Выберите нужную кнопку и получите мгновенный отчёт!\n\n"
-        f"📋 **Примеры запросов:**\n"
-        f"• `Сидоров` или `Иванов Иван`\n"
-        f"• `+79991234567`\n"
-        f"• `@alex_dev`\n\n"
-        f"🆔 **Ваш Telegram ID:** `{user.id}`\n"
-        f"📊 **Доступно поисков:** `{limit}`"
+        f"🕵️‍♂️ **OSINT Sherlock Bot** 🕵️‍♂️\n\n"
+        f"💡 **Введи запрос для поиска (ФИО, номер телефона или @username):**\n"
+        f"• Напиши номер, имя или ник в чат.\n"
+        f"• Бот предложит выбрать, какую именно информацию тебе выдать!\n\n"
+        f"🆔 **Твой ID:** `{user.id}`\n"
+        f"📊 **Баланс поисков:** `{limit}`"
     )
     await update.message.reply_text(welcome_text, parse_mode="Markdown", reply_markup=get_bottom_keyboard())
 
-# --- ВЫБОР ТИПА ПОИСКА ПОСЛЕ ВВОДА ЗАПРОСА ---
+# --- ОБРАБОТЧИК ВВОДА ЗАПРОСА (ВЫБОР ДЕЙСТВИЯ КНОПКАМИ) ---
 async def handle_user_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     raw_input = update.message.text.strip()
@@ -136,54 +130,53 @@ async def handle_user_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if get_user_limit(user_id) <= 0:
-        await update.message.reply_text("❌ У вас закончились бесплатные поиски!")
+        await update.message.reply_text("❌ Закончились бесплатные поиски!")
         return
 
-    # Клавиатура с выбором типа поиска
+    # Главные 3 кнопки выбора типа поиска
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📁 Искать в закрытой Базе Досье", callback_data=f"mode_db_{raw_input}")],
-        [InlineKeyboardButton("📞 Проверить Телефон (Страна/Оператор/Мессенджеры)", callback_data=f"mode_phone_{raw_input}")],
-        [InlineKeyboardButton("🌐 Сканировать Соцсети & Платформы", callback_data=f"mode_social_{raw_input}")]
+        [InlineKeyboardButton("📁 Показать Досье из Базы (ФИО, Заметки)", callback_data=f"mode_db_{raw_input}")],
+        [InlineKeyboardButton("📞 Определить Оператора и Страну по номеру", callback_data=f"mode_phone_{raw_input}")],
+        [InlineKeyboardButton("🌐 Сканировать Соцсети (VK, Telegram, Maigret)", callback_data=f"mode_social_{raw_input}")]
     ])
 
     await update.message.reply_text(
-        f"🔍 **Запрос принят:** `{raw_input}`\n\n"
-        f"👇 **Выберите, какую именно информацию вы хотите найти:**",
+        f"🔍 **Запрос:** `{raw_input}`\n\n"
+        f"👇 **Какой тип поиска тебе нужен? Выбери кнопку ниже:**",
         parse_mode="Markdown",
         reply_markup=keyboard
     )
 
-# --- ОБРАБОТЧИК КНОПОК И РЕЖИМОВ ПОИСКА ---
+# --- НАЖАТИЕ НА КНОПКИ ---
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = query.from_user.id
     data = query.data
 
-    # 1. Поиск в Базе Данных
+    # 1. Если выбрали "Показать Досье из Базы"
     if data.startswith("mode_db_"):
         search_target = data.replace("mode_db_", "")
         await query.answer()
-        await query.message.edit_text(f"⏳ Выполняется поиск в локальной базе для `{search_target}`...", parse_mode="Markdown")
         
         db_matches = search_in_db(search_target)
         if db_matches:
             USER_LIMITS[user_id] -= 1
+            response_text = "👤 **Результаты поиска в локальной Базе:**\n\n"
             for record in db_matches:
                 full_name, phone, username, notes = record
-                dossier_text = (
-                    f"👤 **Найдено Досье в Базе:**\n"
-                    f"├ **ФИО:** {full_name}\n"
-                    f"├ **Телефон:** `{phone}`\n"
-                    f"├ **Username:** `@{username}`\n"
-                    f"└ **Заметки:** {notes}\n\n"
-                    f"📉 *Осталось поисков:* `{USER_LIMITS[user_id]}`"
+                response_text += (
+                    f"▫️ **ФИО:** {full_name}\n"
+                    f"  ├ **Телефон:** `{phone}`\n"
+                    f"  ├ **Username:** `@{username}`\n"
+                    f"  └ **Заметки:** {notes}\n\n"
                 )
-                await query.message.reply_text(dossier_text, parse_mode="Markdown")
+            response_text += f"📉 *Осталось поисков:* `{USER_LIMITS[user_id]}`"
+            await query.message.edit_text(response_text, parse_mode="Markdown")
         else:
-            await query.message.reply_text(f"❌ Запись `{search_target}` не найдена в Базе Досье.", parse_mode="Markdown")
+            await query.message.edit_text(f"❌ Запись `{search_target}` не найдена в Базе Досье.", parse_mode="Markdown")
         return
 
-    # 2. Анализ Телефона
+    # 2. Если выбрали "Определить Оператора и Страну"
     if data.startswith("mode_phone_"):
         phone_raw = data.replace("mode_phone_", "")
         await query.answer()
@@ -205,7 +198,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         wa_url = f"https://wa.me/{clean_phone}"
         tg_url = f"https://t.me/+{clean_phone}"
         viber_url = f"https://viber.click/{clean_phone}"
-        messenger_url = f"https://www.facebook.com/messages/t/{clean_phone}"
         google_url = f"https://www.google.com/search?q=%22%2B{clean_phone}%22+OR+%22{clean_phone}%22"
 
         USER_LIMITS[user_id] -= 1
@@ -215,22 +207,19 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"📌 **Данные оператора:**\n"
             f"• Регион/Страна: `{country_name}`\n"
             f"• Оператор связи: `{operator_name}`\n\n"
-            f"💬 **Прямые мосты в мессенджеры:**\n"
-            f"• 🟢 **WhatsApp:** [Открыть чат]({wa_url})\n"
-            f"• ✈️ **Telegram:** [Проверить]({tg_url})\n"
-            f"• 🟣 **Viber:** [Открыть чат]({viber_url})\n"
-            f"• 🔵 **FB Messenger:** [Перейти]({messenger_url})\n\n"
-            f"🔎 **Поисковая выдача:** [Google Search]({google_url})\n\n"
+            f"💬 **Прямой переход в мессенджеры:**\n"
+            f"• 🟢 [WhatsApp]({wa_url}) | ✈️ [Telegram]({tg_url}) | 🟣 [Viber]({viber_url})\n\n"
+            f"🔎 **Гугл Поиск:** [Google Search]({google_url})\n\n"
             f"📉 *Осталось поисков:* `{USER_LIMITS[user_id]}`"
         )
         await query.message.edit_text(phone_text, parse_mode="Markdown", disable_web_page_preview=True)
         return
 
-    # 3. Сканирование Соцсетей
+    # 3. Если выбрали "Сканировать Соцсети"
     if data.startswith("mode_social_"):
         target = data.replace("mode_social_", "").replace("@", "")
         await query.answer()
-        await query.message.edit_text(f"🔍 Запуск сканирования соцсетей и Maigret для `{target}`...", parse_mode="Markdown")
+        await query.message.edit_text(f"🔍 Запуск сканирования соцсетей для `{target}`...", parse_mode="Markdown")
         await run_full_search(target, query, user_id, context)
         return
 
@@ -247,7 +236,7 @@ async def parse_page_details(url: str, response_text: str) -> str:
         og_title = soup.find("meta", property="og:title")
         if og_title and og_title.get("content"):
             title = og_title["content"].strip()
-            info_parts.append(f"👤 *Имя/Заголовок:* {title}")
+            info_parts.append(f"👤 *Имя:* {title}")
         if info_parts:
             return "\n   " + "\n   ".join(info_parts)
     except Exception:
@@ -264,7 +253,7 @@ async def run_maigret_search(username: str) -> str:
         stdout, _ = await proc.communicate()
         output = stdout.decode("utf-8")
         found_links = [line.strip() for line in output.split("\n") if "🔗" in line or "http" in line]
-        return "\n".join(found_links[:5]) if found_links else "Профили Maigret не найдены."
+        return "\n".join(found_links[:5]) if found_links else "Профили не найдены."
     except Exception:
         return "⚠️ Сканирование завершено."
 
@@ -301,7 +290,7 @@ async def run_full_search(username: str, query, user_id: int, context: ContextTy
             res = requests.get(url, headers=headers, timeout=2.5)
             if res.status_code in [200, 301, 302] and "page_not_found" not in res.url:
                 details = await parse_page_details(url, res.text)
-                results.append(f"{name}: ✅ [Ссылка на профиль]({url}){details}")
+                results.append(f"{name}: ✅ [Ссылка]({url}){details}")
             else:
                 results.append(f"{name}: ❌ Не найден")
         except Exception:
@@ -311,9 +300,9 @@ async def run_full_search(username: str, query, user_id: int, context: ContextTy
     USER_LIMITS[user_id] -= 1
 
     final_text = (
-        f"📊 **OSINT-Отчёт по нику:** `{username}`\n\n"
+        f"📊 **Отчёт по соцсетям:** `{username}`\n\n"
         + "\n\n".join(results) +
-        f"\n\n🔍 **Результаты Maigret:**\n`{maigret_res}`\n\n"
+        f"\n\n🔍 **Сканер:**\n`{maigret_res}`\n\n"
         f"📉 *Осталось поисков:* `{USER_LIMITS[user_id]}`"
     )
 
@@ -331,7 +320,7 @@ async def add_dossier_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not raw_text or "|" not in raw_text:
         await update.message.reply_text(
             "⚠️ **Формат команды:**\n"
-            "`/add +79991234567 | Сидоров Алексей Иванович | +79991234567 | @sidorov_test | Запись`",
+            "`/add +79991234567 | Сидоров Алексей Иванович | +79991234567 | @sidorov_test | Подозреваемый`",
             parse_mode="Markdown"
         )
         return
