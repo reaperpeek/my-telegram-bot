@@ -73,6 +73,12 @@ def search_in_db(query_text: str):
 def add_to_db(search_key: str, full_name: str, phone: str, username: str, notes: str):
     clean_key = search_key.lower().replace("+", "").replace("@", "").strip()
     clean_user = username.replace("@", "").strip()
+    
+    # Бот автоматически добавляет пометку о возможной смене данных, если её еще нет
+    warning_tag = "⚠️ Юзернейм и данные могут меняться"
+    if warning_tag not in notes:
+        notes = f"{notes} | {warning_tag}" if notes else warning_tag
+
     conn = sqlite3.connect("dossier_database.db")
     cursor = conn.cursor()
     cursor.execute('''
@@ -298,7 +304,6 @@ async def handle_user_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if phone_info:
                 output.append(phone_info.strip())
             
-            # Разбиваем только по разделителям "|" или перенос строки, точки в датах остаются целыми
             notes_lines = [n.strip() for n in re.split(r'\||\n', notes) if n.strip()]
             for line in notes_lines:
                 output.append(f"[+] {line}")
