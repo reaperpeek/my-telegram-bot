@@ -54,6 +54,7 @@ def init_db():
     if "birth_date" not in columns:
         cursor.execute("ALTER TABLE osint_base ADD COLUMN birth_date TEXT")
 
+    # Чистка тестов
     cursor.execute("DELETE FROM osint_base WHERE phone = '+79000000000' OR fio = 'Анастасия'")
 
     conn.commit()
@@ -153,9 +154,9 @@ def format_local_profile(target_id, username, phone, fio, birth_date, info):
     clean_user = f"@{username}" if username and not username.startswith("@") else (username or "<i>Не указан</i>")
     clean_id = f"<code>{target_id}</code>" if target_id else "<i>Не указан</i>"
     clean_phone = f"<code>{phone}</code>" if phone else "<i>Не указан</i>"
-    clean_info = info.strip() if info else "<i>Нет дополнительных заметок</i>"
 
-    return (
+    # Теперь карточка строгая и без дублирования заметок
+    card = (
         f"📂 <b>КАРТОЧКА ИЗ ЛОКАЛЬНОЙ БАЗЫ</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
         f"👤 <b>ФИО:</b> {clean_fio}\n"
@@ -163,9 +164,9 @@ def format_local_profile(target_id, username, phone, fio, birth_date, info):
         f"🔗 <b>Юзернейм:</b> {clean_user}\n"
         f"🆔 <b>Telegram ID:</b> {clean_id}\n"
         f"📞 <b>Телефон:</b> {clean_phone}\n"
-        f"📝 <b>Заметка / Инфо:</b>\n{clean_info}\n"
         f"━━━━━━━━━━━━━━━━━━━━━━"
     )
+    return card
 
 def check_phone(phone_number):
     try:
@@ -368,18 +369,22 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         phone = re.search(r'\+?\d{10,15}', info_text)
         dob = re.search(r'\b(\d{2}[\.\/]\d{2}[\.\/]\d{4})\b', info_text)
         
-        # Исправленный чистый парсинг ФИО
+        # Точный поиск ФИО
         fio_match = re.search(r'(?:ФИО:?|ФИО\s*-?)\s*([^\n\r]+)', info_text, re.IGNORECASE)
         fio_val = ""
         if fio_match:
-            fio_val = fio_match.group(1).split("Юз")[0].split("Тел")[0].split("ID")[0].strip()
+            fio_val = fio_match.group(1).split("Юз")[0].split("Тел")[0].split("ID")[0].split("ДР")[0].strip()
+        elif not username and not phone:
+            lines = [l.strip() for l in info_text.split('\n') if l.strip()]
+            if lines:
+                fio_val = lines[0]
 
         t_id = target_id.group(1) if target_id else ""
         u_name = username.group(1) if username else ""
         ph = phone.group(0) if phone else ""
         dob_val = dob.group(1) if dob else ""
 
-        add_to_osint_base(t_id, u_name, ph, fio_val, dob_val, info_text)
+        add_to_osint_base(t_id, u_name, ph, fio_val, dob_val, "")
         await query.edit_message_text(f"✅ <b>Заявка одобрена и занесена в базу!</b>\n\n{info_text}", parse_mode="HTML")
         try:
             await context.bot.send_message(int(user_id_str), "🎉 Ваша заявка одобрена!")
@@ -421,7 +426,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             local_card = format_local_profile(local[0], local[1], local[2], local[3], local[4], local[5])
             res = f"{phone_info}\n\n{local_card}"
         else:
-            res = f"{phone_info}\n\n📂 <b>Локальная база:</b> <i>Данных не найдено.</i>"
+            res = f"{phone_info}\n\n📂 <b>Локальная база:</b> <i>Данные не найдены.</i>"
         await update.message.reply_text(res, parse_mode="HTML")
         return
 
@@ -482,4 +487,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-    
