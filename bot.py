@@ -155,7 +155,6 @@ def format_local_profile(target_id, username, phone, fio, birth_date, info):
     clean_id = f"<code>{target_id}</code>" if target_id else "<i>Не указан</i>"
     clean_phone = f"<code>{phone}</code>" if phone else "<i>Не указан</i>"
 
-    # Теперь карточка строгая и без дублирования заметок
     card = (
         f"📂 <b>КАРТОЧКА ИЗ ЛОКАЛЬНОЙ БАЗЫ</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -259,6 +258,49 @@ async def export_db_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     if os.path.exists("bot_base.db"):
         await update.message.reply_document(document=open("bot_base.db", "rb"), caption="💾 База данных")
+
+async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    doc = update.message.document
+    if not doc.file_name.endswith('.txt'):
+        await update.message.reply_text("❌ Отправь файл в формате .txt!")
+        return
+
+    await update.message.reply_text("⏳ Обрабатываю TXT файл...")
+    
+    file = await context.bot.get_file(doc.file_id)
+    file_bytes = await file.download_as_bytearray()
+    text_content = file_bytes.decode('utf-8', errors='ignore')
+
+    lines = text_content.splitlines()
+    added_count = 0
+
+    conn = sqlite3.connect("bot_base.db")
+    cursor = conn.cursor()
+
+    for line in lines:
+        if not line.strip():
+            continue
+        parts = line.split(";")
+        if len(parts) >= 3:
+            t_id = parts[0].strip()
+            u_name = parts[1].strip().replace("@", "")
+            ph = parts[2].strip()
+            fio = parts[3].strip() if len(parts) > 3 else ""
+            dob = parts[4].strip() if len(parts) > 4 else ""
+
+            cursor.execute(
+                "INSERT OR REPLACE INTO osint_base (target_id, username, phone, fio, birth_date, status) VALUES (?, ?, ?, ?, ?, 'approved')",
+                (t_id, u_name, ph, fio, dob)
+            )
+            added_count += 1
+
+    conn.commit()
+    conn.close()
+
+    await update.message.reply_text(f"🚀 Успешно занесено <b>{added_count}</b> человек в базу!", parse_mode="HTML")
 
 async def handle_deep_search_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -369,7 +411,6 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         phone = re.search(r'\+?\d{10,15}', info_text)
         dob = re.search(r'\b(\d{2}[\.\/]\d{2}[\.\/]\d{4})\b', info_text)
         
-        # Точный поиск ФИО
         fio_match = re.search(r'(?:ФИО:?|ФИО\s*-?)\s*([^\n\r]+)', info_text, re.IGNORECASE)
         fio_val = ""
         if fio_match:
@@ -480,6 +521,7 @@ def main():
     app.add_handler(CallbackQueryHandler(admin_callback))
     app.add_handler(PreCheckoutQueryHandler(precheckout_callback))
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
+    app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
     print("Бот успешно запущен!")
