@@ -1,457 +1,155 @@
 import asyncio
-import re
-import sqlite3
-import os
-import aiohttp
-import phonenumbers
-from phonenumbers import geocoder, carrier
-
-from telegram import (
-    Update, ReplyKeyboardMarkup, KeyboardButton, 
-    InlineKeyboardMarkup, InlineKeyboardButton, LabeledPrice
+import logging
+from aiogram import Bot, Dispatcher, F, types
+from aiogram.filters import CommandStart
+from aiogram.types import (
+    ReplyKeyboardMarkup, KeyboardButton, 
+    InlineKeyboardMarkup, InlineKeyboardButton
 )
-from telegram.ext import (
-    ApplicationBuilder, CommandHandler, MessageHandler, 
-    CallbackQueryHandler, ContextTypes, ConversationHandler, filters,
-    PreCheckoutQueryHandler
-)
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.fsm.storage.memory import MemoryStorage
 
-TOKEN = "8408315552:AAFswxkq2cabG-xpUUUsF1iCl3co4E0yXjo"
-ADMIN_ID = 7786483533
+# ⚙️ НАСТРОЙКИ
+BOT_TOKEN = "8408315552:AAEv_A-kJpkUyGdIH--RDYNDTJS4I1BACiI"
+ADMIN_ID = 123456789  # ⚠️ ЗАМЕНИ НА СВОЙ TELEGRAM ID (можно узнать через @userinfobot)
 
-# Твои данные Telethon
-API_ID = 32806507
-API_HASH = "a5a62b1c8051c9a79447e84d5adc70bc"
+# Наценка (например, 1.10 = +10% к ценам Лютера)
+MARGIN = 1.10 
 
-WAITING_PERSON_DATA = 1
-REFS_NEEDED = 5
+bot = Bot(token=BOT_TOKEN)
+dp = Dispatcher(storage=MemoryStorage())
+logging.basicConfig(level=logging.INFO)
 
-def init_db():
-    conn = sqlite3.connect("bot_base.db")
-    cursor = conn.cursor()
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS bot_users (
-            user_id INTEGER PRIMARY KEY,
-            username TEXT,
-            searches_left INTEGER DEFAULT 0,
-            referrals_count INTEGER DEFAULT 0,
-            ref_id INTEGER
-        )
-    """)
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS osint_base (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            target_id TEXT,
-            username TEXT,
-            phone TEXT,
-            fio TEXT,
-            birth_date TEXT,
-            info TEXT,
-            status TEXT DEFAULT 'approved'
-        )
-    """)
-    
-    cursor.execute("PRAGMA table_info(osint_base)")
-    columns = [column[1] for column in cursor.fetchall()]
-    if "fio" not in columns:
-        cursor.execute("ALTER TABLE osint_base ADD COLUMN fio TEXT")
-    if "birth_date" not in columns:
-        cursor.execute("ALTER TABLE osint_base ADD COLUMN birth_date TEXT")
+# База данных в памяти (БД)
+users_db = {}
 
-    cursor.execute("DELETE FROM osint_base WHERE phone = '+79000000000' OR fio = 'Анастасия'")
-    conn.commit()
-    conn.close()
+# Состояния для ФСМ (загрузка чека)
+class OrderState(StatesGroup):
+    waiting_for_receipt = State()
+    confirm_receipt = State()
 
-init_db()
+def get_user_lang(user_id):
+    return users_db.get(user_id, {}).get('lang', 'ru')
 
-def save_bot_user(user_id, username, ref_id=None):
-    conn = sqlite3.connect("bot_base.db")
-    cursor = conn.cursor()
-    cursor.execute("SELECT user_id FROM bot_users WHERE user_id = ?", (user_id,))
-    if not cursor.fetchone():
-        cursor.execute("INSERT INTO bot_users (user_id, username, searches_left, referrals_count, ref_id) VALUES (?, ?, 0, 0, ?)", 
-                       (user_id, username, ref_id))
-        if ref_id:
-            cursor.execute("UPDATE bot_users SET referrals_count = referrals_count + 1 WHERE user_id = ?", (ref_id,))
-            cursor.execute("SELECT referrals_count FROM bot_users WHERE user_id = ?", (ref_id,))
-            row = cursor.fetchone()
-            if row and row[0] >= REFS_NEEDED:
-                cursor.execute("UPDATE bot_users SET searches_left = searches_left + 1, referrals_count = referrals_count - ? WHERE user_id = ?", (REFS_NEEDED, ref_id))
-    conn.commit()
-    conn.close()
-
-def get_user_stats(user_id):
-    conn = sqlite3.connect("bot_base.db")
-    cursor = conn.cursor()
-    cursor.execute("SELECT searches_left, referrals_count FROM bot_users WHERE user_id = ?", (user_id,))
-    row = cursor.fetchone()
-    conn.close()
-    return (row[0], row[1]) if row else (0, 0)
-
-def add_searches(user_id, count=1):
-    conn = sqlite3.connect("bot_base.db")
-    cursor = conn.cursor()
-    cursor.execute("UPDATE bot_users SET searches_left = searches_left + ? WHERE user_id = ?", (count, user_id))
-    conn.commit()
-    conn.close()
-
-def get_all_bot_users():
-    conn = sqlite3.connect("bot_base.db")
-    cursor = conn.cursor()
-    cursor.execute("SELECT user_id, username, searches_left, referrals_count FROM bot_users")
-    rows = cursor.fetchall()
-    conn.close()
-    return rows
-
-def search_in_local_db(query):
-    conn = sqlite3.connect("bot_base.db")
-    cursor = conn.cursor()
-    clean_q = query.replace("@", "").strip()
-    cursor.execute(
-        "SELECT target_id, username, phone, fio, birth_date, info FROM osint_base WHERE (username = ? OR target_id = ? OR phone = ?) AND status = 'approved' ORDER BY id DESC", 
-        (clean_q, clean_q, clean_q)
-    )
-    res = cursor.fetchone()
-    conn.close()
-    return res
-
-def delete_from_osint_base(query):
-    conn = sqlite3.connect("bot_base.db")
-    cursor = conn.cursor()
-    clean_q = query.replace("@", "").strip()
-    cursor.execute("DELETE FROM osint_base WHERE username = ? OR target_id = ? OR phone = ?", (clean_q, clean_q, clean_q))
-    count = cursor.rowcount
-    conn.commit()
-    conn.close()
-    return count
-
-def add_to_osint_base(target_id, username, phone, fio, birth_date, info):
-    conn = sqlite3.connect("bot_base.db")
-    cursor = conn.cursor()
-    clean_user = username.replace("@", "").strip() if username else ""
-    if clean_user:
-        cursor.execute("DELETE FROM osint_base WHERE username = ?", (clean_user,))
-    if phone:
-        cursor.execute("DELETE FROM osint_base WHERE phone = ?", (phone,))
-    if target_id:
-        cursor.execute("DELETE FROM osint_base WHERE target_id = ?", (target_id,))
-    cursor.execute(
-        "INSERT INTO osint_base (target_id, username, phone, fio, birth_date, info, status) VALUES (?, ?, ?, ?, ?, ?, 'approved')",
-        (target_id, clean_user, phone, fio, birth_date, info)
-    )
-    conn.commit()
-    conn.close()
-
-def format_local_profile(target_id, username, phone, fio, birth_date, info):
-    clean_fio = fio.strip() if fio else "<i>Не указано</i>"
-    clean_dob = birth_date.strip() if birth_date else "<i>Не указана</i>"
-    clean_user = f"@{username}" if username and not username.startswith("@") else (username or "<i>Не указан</i>")
-    clean_id = f"<code>{target_id}</code>" if target_id else "<i>Не указан</i>"
-    clean_phone = f"<code>{phone}</code>" if phone else "<i>Не указан</i>"
-
-    return (
-        f"📂 <b>КАРТОЧКА ИЗ ЛОКАЛЬНОЙ БАЗЫ</b>\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"👤 <b>ФИО:</b> {clean_fio}\n"
-        f"🎂 <b>Дата рождения:</b> {clean_dob}\n"
-        f"🔗 <b>Юзернейм:</b> {clean_user}\n"
-        f"🆔 <b>Telegram ID:</b> {clean_id}\n"
-        f"📞 <b>Телефон:</b> {clean_phone}\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━"
-    )
-
-def check_phone(phone_number):
-    try:
-        parsed = phonenumbers.parse(phone_number, None)
-        if not phonenumbers.is_valid_number(parsed):
-            return "❌ Некорректный номер телефона."
-        country = geocoder.country_name_for_number(parsed, "ru")
-        region = geocoder.description_for_number(parsed, "ru")
-        operator = carrier.name_for_number(parsed, "ru")
-        return (
-            f"📞 <b>Результат поиска по номеру:</b> <code>{phone_number}</code>\n\n"
-            f"🏳️ <b>Страна:</b> {country or 'Не определена'}\n"
-            f"📍 <b>Регион:</b> {region or 'Не определен'}\n"
-            f"📡 <b>Оператор:</b> {operator or 'Не определен'}"
-        )
-    except Exception as e:
-        return f"❌ Ошибка: {e}"
-
-async def check_username_via_tgstat(username: str):
-    clean_name = username.replace("@", "").strip()
-    url = f"https://tgstat.ru/channel/@{clean_name}"
-    async with aiohttp.ClientSession() as session:
-        try:
-            async with session.get(url, timeout=5) as resp:
-                if resp.status == 200:
-                    text = await resp.text()
-                    match = re.search(r'data-id="(\d+)"', text)
-                    if match:
-                        return match.group(1)
-        except Exception:
-            pass
-    return None
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    args = context.args
-    ref_id = int(args[0]) if args and args[0].isdigit() and int(args[0]) != user.id else None
-    
-    save_bot_user(user.id, user.username, ref_id)
-    searches, refs = get_user_stats(user.id)
-    
-    keyboard = [
-        [KeyboardButton("🔍 Поиск юзера / телефона")],
-        [KeyboardButton("➕ Добавить в базу на модерацию")],
-        [KeyboardButton("⚡ Deep Search (Платный)"), KeyboardButton("🔗 Партнёрка")]
-    ]
-    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-    
-    msg = (
-        f"🆔 <b>Твой TG ID:</b> <code>{user.id}</code>\n"
-        f"⚡ <b>Доступно Deep Search:</b> {searches} шт.\n"
-        f"👥 <b>Прогресс рефералов:</b> {refs}/{REFS_NEEDED}\n\n"
-        f"🕵️ <b>SCOUTrr — Народная OSINT-База</b>\n\n"
-        f"• 🔍 <b>Базовый поиск</b> — открытая информация (бесплатно).\n"
-        f"• ⚡ <b>Deep Search</b> — полная проверка по архивам (требует 1 проверку).\n"
-        f"• ➕ <b>Добавить человека</b> — внеси данные на модерацию.\n"
-        f"• 🔗 <b>Партнёрка</b> — пригласи 5 друзей и получи Deep Search БЕСПЛАТНО!"
-    )
-    await update.message.reply_text(msg, parse_mode="HTML", reply_markup=reply_markup)
-
-async def delete_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        return
-    if not context.args:
-        await update.message.reply_text("Использование: <code>/del @username</code>", parse_mode="HTML")
-        return
-    target = context.args[0]
-    deleted_count = delete_from_osint_base(target)
-    if deleted_count > 0:
-        await update.message.reply_text(f"🗑 Запись <code>{target}</code> удалена!", parse_mode="HTML")
+# Главное меню
+def main_kb(lang):
+    if lang == 'uk':
+        return ReplyKeyboardMarkup(keyboard=[
+            [KeyboardButton(text="🛍 Товари"), KeyboardButton(text="💰 Продати Stars")],
+            [KeyboardButton(text="👤 Профіль"), KeyboardButton(text="🧮 Порахувати")],
+            [KeyboardButton(text="💬 Відгуки"), KeyboardButton(text="👨‍💻 Підтримка / FAQ")]
+        ], resize_keyboard=True)
     else:
-        await update.message.reply_text(f"❌ Запись <code>{target}</code> не найдена.", parse_mode="HTML")
+        return ReplyKeyboardMarkup(keyboard=[
+            [KeyboardButton(text="🛍 Товары"), KeyboardButton(text="💰 Продать Stars")],
+            [KeyboardButton(text="👤 Профиль"), KeyboardButton(text="🧮 Посчитать")],
+            [KeyboardButton(text="💬 Отзывы"), KeyboardButton(text="👨‍💻 Поддержка / FAQ")]
+        ], resize_keyboard=True)
 
-async def get_users_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        return
-    users = get_all_bot_users()
-    text = f"👥 <b>Пользователи ({len(users)}):</b>\n\n"
-    for uid, uname, s_count, r_count in users:
-        text += f"• ID: <code>{uid}</code> | @{uname or 'скрыт'} | Баланс: {s_count} | Рефы: {r_count}/{REFS_NEEDED}\n"
-    await update.message.reply_text(text, parse_mode="HTML")
-
-async def export_db_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        return
-    if os.path.exists("bot_base.db"):
-        await update.message.reply_document(document=open("bot_base.db", "rb"), caption="💾 База данных")
-
-async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        return
-    doc = update.message.document
-    if not doc.file_name.endswith('.txt'):
-        await update.message.reply_text("❌ Отправь файл в формате .txt!")
-        return
-
-    await update.message.reply_text("⏳ Обрабатываю TXT файл...")
-    file = await context.bot.get_file(doc.file_id)
-    file_bytes = await file.download_as_bytearray()
-    text_content = file_bytes.decode('utf-8', errors='ignore')
-
-    lines = text_content.splitlines()
-    added_count = 0
-    conn = sqlite3.connect("bot_base.db")
-    cursor = conn.cursor()
-
-    for line in lines:
-        if not line.strip():
-            continue
-        parts = line.split(";")
-        if len(parts) >= 3:
-            t_id = parts[0].strip()
-            u_name = parts[1].strip().replace("@", "")
-            ph = parts[2].strip()
-            fio = parts[3].strip() if len(parts) > 3 else ""
-            dob = parts[4].strip() if len(parts) > 4 else ""
-
-            cursor.execute(
-                "INSERT OR REPLACE INTO osint_base (target_id, username, phone, fio, birth_date, status) VALUES (?, ?, ?, ?, ?, 'approved')",
-                (t_id, u_name, ph, fio, dob)
-            )
-            added_count += 1
-
-    conn.commit()
-    conn.close()
-    await update.message.reply_text(f"🚀 Успешно занесено <b>{added_count}</b> человек в базу!", parse_mode="HTML")
-
-async def handle_deep_search_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    searches, refs = get_user_stats(user_id)
-    if searches <= 0:
-        bot_info = await context.bot.get_me()
-        ref_link = f"https://t.me/{bot_info.username}?start={user_id}"
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("⭐️ Купить 1 Deep Search (10 Stars)", callback_data="buy_1")],
-            [InlineKeyboardButton("⭐️ Купить 5 Deep Search (40 Stars)", callback_data="buy_5")]
-        ])
-        text = (
-            f"❌ <b>У вас 0 доступных Deep Search проверок!</b>\n\n"
-            f"🎁 <b>Как получить бесплатно:</b>\n"
-            f"Пригласите <b>5 друзей</b> по своей ссылке, чтобы получить <b>1 Deep Search</b>!\n"
-            f"Прогресс: <b>{refs}/{REFS_NEEDED}</b> друзей приглашено.\n\n"
-            f"🔗 Твоя реферальная ссылка:\n<code>{ref_link}</code>\n\n"
-            f"💳 <b>Или купи проверки мгновенно за Telegram Stars:</b>"
-        )
-        await update.message.reply_text(text, parse_mode="HTML", reply_markup=keyboard)
-    else:
-        await update.message.reply_text(f"⚡ <b>Deep Search Активирован!</b> (Доступно: {searches})\nОтправьте объект для проверки:", parse_mode="HTML")
-
-async def buy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    count = 1 if query.data == "buy_1" else 5
-    price = 10 if count == 1 else 40
-    prices = [LabeledPrice(f"{count} Deep Search", price)]
-    await context.bot.send_invoice(
-        chat_id=query.message.chat_id,
-        title=f"Пополнение Deep Search ({count} шт.)",
-        description=f"Приобретение {count} глубоких проверок",
-        payload=f"deep_search_{count}",
-        provider_token="",
-        currency="XTR",
-        prices=prices
-    )
-
-async def precheckout_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.pre_checkout_query
-    await query.answer(ok=True)
-
-async def successful_payment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    payment = update.message.successful_payment
-    user_id = update.effective_user.id
-    count = 1 if "1" in payment.invoice_payload else 5
-    add_searches(user_id, count)
-    await update.message.reply_text(f"🎉 <b>Оплата прошла успешно!</b> Вам начислено <b>+{count} Deep Search</b>.", parse_mode="HTML")
-
-async def start_add_person(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("📝 <b>Отправь данные человека для добавления в базу:</b>\nОтмена: /cancel", parse_mode="HTML")
-    return WAITING_PERSON_DATA
-
-async def receive_person_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text
-    user = update.effective_user
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("✅ Одобрить", callback_data=f"approve_{user.id}"), InlineKeyboardButton("❌ Отклонить", callback_data=f"reject_{user.id}")]
+# 1. СТАРТ
+@dp.message(CommandStart())
+async def cmd_start(message: types.Message):
+    user_id = message.from_user.id
+    if user_id not in users_db:
+        users_db[user_id] = {'balance_uah': 0, 'balance_stars': 0, 'lang': 'ru'}
+        
+    lang_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🇺🇦 Українська", callback_data="set_lang_uk")],
+        [InlineKeyboardButton(text="🇷🇺 Русский", callback_data="set_lang_ru")]
     ])
-    context.bot_data[f"pending_{user.id}"] = text
-    await context.bot.send_message(ADMIN_ID, f"📥 <b>Заявка от</b> @{user.username} (ID: <code>{user.id}</code>):\n\n{text}", parse_mode="HTML", reply_markup=keyboard)
-    await update.message.reply_text("✅ Отправлено на модерацию!")
-    return ConversationHandler.END
+    await message.answer("Оберіть мову / Выберите язык:", reply_markup=lang_kb)
 
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Отменено.")
-    return ConversationHandler.END
-
-async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    data = query.data
-    if data.startswith("buy_"):
-        await buy_callback(update, context)
-        return
-    action, user_id_str = data.split("_")
-    info_text = context.bot_data.get(f"pending_{user_id_str}", "")
-    if action == "approve":
-        target_id = re.search(r'(?:ID:?|id:?|\b)\s*(\d{7,11})\b', info_text)
-        username = re.search(r'@([a-zA-Z0-9_]{5,32})', info_text)
-        phone = re.search(r'\+?\d{10,15}', info_text)
-        dob = re.search(r'\b(\d{2}[\.\/]\d{2}[\.\/]\d{4})\b', info_text)
-        fio_match = re.search(r'(?:ФИО:?|ФИО\s*-?)\s*([^\n\r]+)', info_text, re.IGNORECASE)
-        fio_val = fio_match.group(1).strip() if fio_match else ""
-
-        add_to_osint_base(
-            target_id.group(1) if target_id else "",
-            username.group(1) if username else "",
-            phone.group(0) if phone else "",
-            fio_val,
-            dob.group(1) if dob else "",
-            ""
-        )
-        await query.edit_message_text(f"✅ <b>Одобрено и добавлено!</b>\n\n{info_text}", parse_mode="HTML")
-    else:
-        await query.edit_message_text(f"❌ <b>Отклонено.</b>\n\n{info_text}", parse_mode="HTML")
-
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip()
-    user_id = update.effective_user.id
-    if text == "🔍 Поиск юзера / телефона":
-        await update.message.reply_text("Отправь <code>@username</code> или номер телефона:", parse_mode="HTML")
-        return
-    if text in ["⚡ Deep Search", "⚡ Deep Search (Платный)"]:
-        await handle_deep_search_click(update, context)
-        return
-    if text == "🔗 Партнёрка":
-        bot_info = await context.bot.get_me()
-        searches, refs = get_user_stats(user_id)
-        await update.message.reply_text(
-            f"🔗 <b>Ваша ссылка:</b>\n<code>https://t.me/{bot_info.username}?start={user_id}</code>\n\n"
-            f"📊 Доступно: <b>{searches} шт.</b> | Рефералы: <b>{refs}/{REFS_NEEDED}</b>", parse_mode="HTML"
-        )
-        return
-
-    if re.match(r'^\+?\d{10,15}$', text):
-        local = search_in_local_db(text)
-        phone_info = check_phone(text)
-        res = f"{phone_info}\n\n{format_local_profile(local[0], local[1], local[2], local[3], local[4], local[5])}" if local else f"{phone_info}\n\n📂 <b>Локальная база:</b> <i>Не найдено.</i>"
-        await update.message.reply_text(res, parse_mode="HTML")
-        return
-
-    if text.startswith("@") or re.match(r'^[a-zA-Z0-9_]{5,32}$', text):
-        username = text if text.startswith("@") else f"@{text}"
-        clean_name = username.replace("@", "")
-        await update.message.reply_text("⏳ Идет поиск...")
-        local = search_in_local_db(clean_name)
-        extracted_id = (local[0] if local else None) or await check_username_via_tgstat(clean_name)
-        id_str = f"<code>{extracted_id}</code>" if extracted_id else "<i>Не найден</i>"
-        local_card = format_local_profile(local[0], local[1], local[2], local[3], local[4], local[5]) if local else "📂 <b>Локальная база:</b> <i>Запись не найдена.</i>"
-
-        res = (
-            f"📱 <b>TELEGRAM ПОЛЬЗОВАТЕЛЬ:</b>\n"
-            f"👤 <b>Юзернейм:</b> {username}\n"
-            f"🆔 <b>Telegram ID:</b> {id_str}\n"
-            f"🔗 <b>Ссылка:</b> https://t.me/{clean_name}\n\n"
-            f"{local_card}\n\n"
-            f"🌐 <b>Обнаруженные ресурсы:</b>\n"
-            f"[+] Telegram: https://t.me/{clean_name}\n"
-            f"[+] TikTok: https://www.tiktok.com/@{clean_name}\n"
-            f"[+] Steam: https://steamcommunity.com/id/{clean_name}"
-        )
-        await update.message.reply_text(res, parse_mode="HTML", disable_web_page_preview=True)
-        return
-
-    await update.message.reply_text("Отправь номер телефона или @username.")
-
-def main():
-    app = ApplicationBuilder().token(TOKEN).build()
-    conv_handler = ConversationHandler(
-        entry_points=[MessageHandler(filters.Regex("^➕ Добавить в базу на модерацию$"), start_add_person)],
-        states={WAITING_PERSON_DATA: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_person_data)]},
-        fallbacks=[CommandHandler("cancel", cancel)]
-    )
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("del", delete_entry))
-    app.add_handler(CommandHandler("users", get_users_list))
-    app.add_handler(CommandHandler("export", export_db_file))
-    app.add_handler(conv_handler)
-    app.add_handler(CallbackQueryHandler(admin_callback))
-    app.add_handler(PreCheckoutQueryHandler(precheckout_callback))
-    app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
-    app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+@dp.callback_query(F.data.startswith("set_lang_"))
+async def set_language(callback: types.CallbackQuery):
+    lang = callback.data.split("_")[-1]
+    user_id = callback.from_user.id
+    users_db[user_id]['lang'] = lang
     
-    app.run_polling()
+    text = "Ласкаво просимо до Reaperpeek Shop!" if lang == 'uk' else "Добро пожаловать в Reaperpeek Shop!"
+    await callback.message.delete()
+    await callback.message.answer(text, reply_markup=main_kb(lang))
+
+# 2. ПРОФИЛЬ
+@dp.message(F.text.in_(["👤 Профіль", "👤 Профиль"]))
+async def show_profile(message: types.Message):
+    user_id = message.from_user.id
+    u = users_db.get(user_id, {'balance_uah': 0, 'balance_stars': 0})
+    lang = get_user_lang(user_id)
+    
+    if lang == 'uk':
+        text = f"ℹ️ **Інформація про вас:**\n\n🆔 ID: `{user_id}`\n✨ Баланс: {u['balance_uah']} UAH ~ {u['balance_stars']} ⭐"
+    else:
+        text = f"ℹ️ **Информация о вас:**\n\n🆔 ID: `{user_id}`\n✨ Баланс: {u['balance_uah']} UAH ~ {u['balance_stars']} ⭐"
+        
+    prof_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💳 Пополнить баланс", callback_data="deposit")]
+    ])
+    await message.answer(text, parse_mode="Markdown", reply_markup=prof_kb)
+
+# 3. ПОПОЛНЕНИЕ БАЛАНСА
+@dp.callback_query(F.data == "deposit")
+async def deposit_start(callback: types.CallbackQuery, state: FSMContext):
+    await callback.message.answer(
+        "💳 **Реквизиты для оплаты:**\n\n"
+        "🇺🇦 Монобанк: `4441 1111 2222 3333`\n"
+        "🇵🇱 BLIK / Zloty: По запросу в ЛС\n\n"
+        "Отправьте **скриншот или файл квитанции** в этот чат после оплаты:",
+        parse_mode="Markdown"
+    )
+    await state.set_state(OrderState.waiting_for_receipt)
+
+# 4. ПОЛУЧЕНИЕ ЧЕКА И ОТПРАВКА АДМИНУ
+@dp.message(OrderState.waiting_for_receipt, F.photo | F.document)
+async def process_receipt(message: types.Message, state: FSMContext):
+    user_id = message.from_user.id
+    username = f"@{message.from_user.username}" if message.from_user.username else "Без юзернейма"
+    
+    # Пересылаем чек админу (тебе)
+    admin_markup = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Подтвердить +100 грн", callback_data=f"confirm_dep_{user_id}_100"),
+            InlineKeyboardButton(text="❌ Отклонить", callback_data=f"reject_dep_{user_id}")
+        ]
+    ])
+    
+    await bot.send_message(
+        ADMIN_ID,
+        f"🔔 **Новый чек на проверку!**\n\nПользователь: {username}\nID: `{user_id}`",
+        parse_mode="Markdown"
+    )
+    
+    if message.photo:
+        await bot.send_photo(ADMIN_ID, message.photo[-1].file_id, reply_markup=admin_markup)
+    elif message.document:
+        await bot.send_document(ADMIN_ID, message.document.file_id, reply_markup=admin_markup)
+        
+    await message.answer("⏳ **Чек получен!** Оператор проверяет поступление средств. Ожидайте начисления.")
+    await state.clear()
+
+# 5. ОБРАБОТКА АДМИН-КНОПОК
+@dp.callback_query(F.data.startswith("confirm_dep_"))
+async def admin_confirm(callback: types.CallbackQuery):
+    _, _, user_id, amount = callback.data.split("_")
+    user_id = int(user_id)
+    amount = int(amount)
+    
+    if user_id in users_db:
+        users_db[user_id]['balance_uah'] += amount
+        
+    await callback.message.edit_caption(caption=f"{callback.message.caption}\n\n✅ **ОДОБРЕНО** (+{amount} UAH)")
+    await bot.send_message(user_id, f"🎉 **Баланс успешно пополнен на {amount} UAH!**")
+
+@dp.callback_query(F.data.startswith("reject_dep_"))
+async def admin_reject(callback: types.CallbackQuery):
+    _, _, user_id = callback.data.split("_")
+    user_id = int(user_id)
+    
+    await callback.message.edit_caption(caption=f"{callback.message.caption}\n\n❌ **ОТКЛОНЕНО**")
+    await bot.send_message(user_id, "❌ **Квитанция отклонена.** Оплата не найдена или чек недействителен.")
+
+async def main():
+    await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
