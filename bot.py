@@ -12,7 +12,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 # ⚙️ НАСТРОЙКИ
 BOT_TOKEN = "8408315552:AAEv_A-kJpkUyGdIH--RDYNDTJS4I1BACiI"
-ADMIN_ID = 123456789  # ⚠️ ЗАМЕНИ НА СВОЙ TELEGRAM ID (можно узнать через @userinfobot)
+ADMIN_ID = 7786483533  # ⚠️ ЗАМЕНИ НА СВОЙ TELEGRAM ID (можно узнать через @userinfobot)
 
 # Наценка (например, 1.10 = +10% к ценам Лютера)
 MARGIN = 1.10 
