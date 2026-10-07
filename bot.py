@@ -97,7 +97,8 @@ def get_nft_kb(page=1):
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 @dp.message(CommandStart())
-async def cmd_start(message: types.Message):
+async def cmd_start(message: types.Message, state: FSMContext):
+    await state.clear()
     uid = message.from_user.id
     if uid not in users_db:
         users_db[uid] = {'balance_uah': 0, 'balance_stars': 0, 'lang': 'ru'}
@@ -229,12 +230,28 @@ async def pay_santander_cb(callback: types.CallbackQuery, state: FSMContext):
     await callback.message.answer(text, parse_mode="Markdown", reply_markup=kb)
     await state.set_state(OrderState.waiting_for_receipt)
 
-# Ловец видео от админа для получения file_id
-@dp.message(F.video)
-async def get_video_file_id(message: types.Message):
+# Универсальный ловец ЛЮБЫХ видео от админа для получения file_id
+@dp.message(F.video | F.animation | F.video_note | F.document)
+async def get_any_video_file_id(message: types.Message, state: FSMContext):
     if message.from_user.id == ADMIN_ID:
-        fid = message.video.file_id
-        await message.answer(f"📹 **file_id вашего видео:**\n`{fid}`\n\nВставьте его в `PUMB_VIDEO_FILE_ID` в файле bot.py!", parse_mode="Markdown")
+        fid = None
+        if message.video:
+            fid = message.video.file_id
+        elif message.animation:
+            fid = message.animation.file_id
+        elif message.video_note:
+            fid = message.video_note.file_id
+        elif message.document and message.document.mime_type and message.document.mime_type.startswith("video"):
+            fid = message.document.file_id
+
+        if fid:
+            await message.answer(f"📹 **file_id вашего видео:**\n`{fid}`\n\nСкопируйте его и вставьте в `PUMB_VIDEO_FILE_ID` в файле bot.py!", parse_mode="Markdown")
+            return
+
+    # Если бот ждёт чек от покупателя, а прислали не фото
+    current_state = await state.get_state()
+    if current_state == OrderState.waiting_for_receipt:
+        await message.answer("⚠️ Пожалуйста, отправьте именно **фотографию/скриншот** чека!")
 
 @dp.message(OrderState.waiting_for_receipt, F.photo)
 async def process_receipt_photo(message: types.Message, state: FSMContext):
@@ -252,10 +269,6 @@ async def process_receipt_photo(message: types.Message, state: FSMContext):
     
     await message.answer("✅ **Чек получен и отправлен на проверку!**\nАдминистратор проверит платеж и выдаст заказ в ближайшее время.")
     await state.clear()
-
-@dp.message(OrderState.waiting_for_receipt)
-async def process_receipt_wrong(message: types.Message):
-    await message.answer("⚠️ Пожалуйста, отправьте именно **фотографию/скриншот** чека!")
 
 @dp.message(F.text.in_(["💰 Продати Stars", "💰 Продать Stars"]))
 async def sell_stars_msg(message: types.Message, state: FSMContext):
