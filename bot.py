@@ -13,11 +13,11 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 
-# Переменные
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8408315552:AAGrpQIl2CFfX6TWzw8iRbILzR94feL8XXo")
-ADMIN_ID = int(os.getenv("ADMIN_ID", "7786483533"))
+# Точные значения напрямую
+BOT_TOKEN = "8408315552:AAGrpQIl2CFfX6TWzw8iRbILzR94feL8XXo"
+ADMIN_ID = 7786483533
 
-# Сюда вставите file_id видео
+# Сюда вставишь file_id видео после отправки его боту
 PUMB_VIDEO_FILE_ID = None 
 
 # Реквизиты
@@ -229,7 +229,7 @@ async def pay_santander_cb(callback: types.CallbackQuery, state: FSMContext):
     await callback.message.answer(text, parse_mode="Markdown", reply_markup=kb)
     await state.set_state(OrderState.waiting_for_receipt)
 
-# Ловец видео от админа
+# Ловец видео от админа для получения file_id
 @dp.message(F.video)
 async def get_video_file_id(message: types.Message):
     if message.from_user.id == ADMIN_ID:
@@ -337,7 +337,7 @@ async def how_get_receipt_cb(callback: types.CallbackQuery):
 async def noop_cb(callback: types.CallbackQuery):
     await callback.answer()
 
-# Фейковый веб-сервер для удержания порта в Render Free Tier Web Service
+# Веб-сервер для прохождения проверки порта в Render
 async def handle_ping(request):
     return web.Response(text="Bot is running!")
 
@@ -352,12 +352,9 @@ async def start_web_server():
     logging.info(f"Dummy HTTP server started on port {port}")
 
 async def main():
-    # Запускаем фоновый веб-сервер для Render
     await start_web_server()
-    
     await bot.delete_my_commands()
     await bot.set_my_commands([BotCommand(command="start", description="Запустить бота")])
-    
     logging.info("Starting Telegram Bot Polling...")
     await dp.start_polling(bot)
 
