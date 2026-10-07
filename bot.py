@@ -13,12 +13,9 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 
-# Точные значения напрямую
+# Точные значения
 BOT_TOKEN = "8408315552:AAGrpQIl2CFfX6TWzw8iRbILzR94feL8XXo"
 ADMIN_ID = 7786483533
-
-# Сюда вставишь file_id видео после отправки его боту
-PUMB_VIDEO_FILE_ID = None 
 
 # Реквизиты
 CARD_PUMB = "4314140214993815"
@@ -52,29 +49,30 @@ def main_kb(lang):
             [KeyboardButton(text="💬 Отзывы"), KeyboardButton(text="👨‍💻 Поддержка / FAQ")]
         ], resize_keyboard=True)
 
+# Цены подняты, чтобы твоя прибыль была выше 30 грн с продажи
 NFT_DATA = {
     1: [
-        ("🍭 399 грн", "nft_lollipop_399"), ("🧦 429 грн", "nft_sock_429"), ("🍦 429 грн", "nft_icecream_429"),
-        ("🍜 449 грн", "nft_noodle_449"), ("🦩 429 грн", "nft_flamingo_429"), ("🐕 499 грн", "nft_dog_499"),
-        ("☃️ 349 грн", "nft_snowman_349"), ("🎁 429 грн", "nft_gift_429")
+        ("🍭 439 грн", "nft_lollipop_439"), ("🧦 469 грн", "nft_sock_469"), ("🍦 469 грн", "nft_icecream_469"),
+        ("🍜 489 грн", "nft_noodle_489"), ("🦩 469 грн", "nft_flamingo_469"), ("🐕 539 грн", "nft_dog_539"),
+        ("☃️ 389 грн", "nft_snowman_389"), ("🎁 469 грн", "nft_gift_469")
     ],
     2: [
-        ("🗽 449 грн", "nft_statue_449"), ("🗑 449 грн", "nft_trash_449"), ("🐍 389 грн", "nft_snake_389"),
-        ("🏺 499 грн", "nft_pot_499"), ("🧦 399 грн", "nft_socks_399"), ("🚀 449 грн", "nft_rocket_449"),
-        ("🍪 389 грн", "nft_cookie_389"), ("📓 419 грн", "nft_book_419")
+        ("🗽 489 грн", "nft_statue_489"), ("🗑 489 грн", "nft_trash_489"), ("🐍 429 грн", "nft_snake_429"),
+        ("🏺 539 грн", "nft_pot_539"), ("🧦 439 грн", "nft_socks_439"), ("🚀 489 грн", "nft_rocket_489"),
+        ("🍪 429 грн", "nft_cookie_429"), ("📓 459 грн", "nft_book_459")
     ],
     3: [
-        ("🎉 389 грн", "nft_party_389"), ("🎒 399 грн", "nft_bag_399"), ("💩 449 грн", "nft_poop_449"),
-        ("🍭 389 грн", "nft_candy_389"), ("💍 499 грн", "nft_ring_499"), ("🍄 489 грн", "nft_shroom_489"),
-        ("🍿 529 грн", "nft_popcorn_529"), ("🧙‍♀️ 799 грн", "nft_witch_799")
+        ("🎉 429 грн", "nft_party_429"), ("🎒 439 грн", "nft_bag_439"), ("💩 489 грн", "nft_poop_489"),
+        ("🍭 429 грн", "nft_candy_429"), ("💍 539 грн", "nft_ring_539"), ("🍄 529 грн", "nft_shroom_529"),
+        ("🍿 569 грн", "nft_popcorn_569"), ("🧙‍♀️ 839 грн", "nft_witch_839")
     ],
     4: [
-        ("🎂 429 грн", "nft_cake_429"), ("🥇 449 грн", "nft_medal_449"), ("🌙 539 грн", "nft_moon_539"),
-        ("🧺 479 грн", "nft_basket_479"), ("🍀 479 грн", "nft_clover_479"), ("👁 629 грн", "nft_eye_629"),
-        ("🐒 639 грн", "nft_monkey_639"), ("🪄 599 грн", "nft_wand_599")
+        ("🎂 469 грн", "nft_cake_469"), ("🥇 489 грн", "nft_medal_489"), ("🌙 579 грн", "nft_moon_579"),
+        ("🧺 519 грн", "nft_basket_519"), ("🍀 519 грн", "nft_clover_519"), ("👁 669 грн", "nft_eye_669"),
+        ("🐒 679 грн", "nft_monkey_679"), ("🪄 639 грн", "nft_wand_639")
     ],
     5: [
-        ("🚬 1199 грн", "nft_cigar_1199"), ("🍬 349 грн", "nft_cane_349"), ("💐 499 грн", "nft_flowers_499")
+        ("🚬 1249 грн", "nft_cigar_1249"), ("🍬 389 грн", "nft_cane_389"), ("💐 539 грн", "nft_flowers_539")
     ]
 }
 
@@ -177,8 +175,8 @@ async def choose_bank(callback: types.CallbackQuery, state: FSMContext):
     await state.update_data(item_name=item_title, price=price)
     
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🏦 Оплата на ПУМБ (с видео)", callback_data="pay_pumb")],
-        [InlineKeyboardButton(text="💳 Santander / Erste (Инструкция)", callback_data="pay_santander")],
+        [InlineKeyboardButton(text="🏦 Оплата на ПУМБ", callback_data="pay_pumb")],
+        [InlineKeyboardButton(text="💳 Santander / Erste", callback_data="pay_santander")],
         [InlineKeyboardButton(text="↩️ Отмена", callback_data="cat_goods")]
     ])
     await callback.message.edit_text(f"🛒 **Заказ:** {item_title}\n💰 **Сумма:** {price}.00 UAH\n\nВыберите способ оплаты:", parse_mode="Markdown", reply_markup=kb)
@@ -188,24 +186,21 @@ async def pay_pumb_cb(callback: types.CallbackQuery, state: FSMContext):
     data = await state.get_data()
     price = data.get('price', '0')
     
-    caption_text = (
-        f"`{CARD_PUMB}`\n\n"
-        f"💬 **Не проходить оплата?**\n"
-        f"-Виберіть інший банк, або пишіть у підтримку!\n\n"
-        f"💰 **До сплати: {price}.00 грн**\n\n"
-        f"🏦 **Після оплати, відправте, сюди в чат, скріншот оплати як на прикладі вище ☝️**"
+    text = (
+        f"🏦 **Инструкция по оплате ПУМБ:**\n\n"
+        f"1️⃣ Нажмите на номер карты ниже, чтобы скопировать:\n`{CARD_PUMB}`\n\n"
+        f"2️⃣ Переведите ровно **{price}.00 UAH** в приложении вашего банка.\n"
+        f"3️⃣ Обязательно сохраните скриншот чека/квитанции о переводе.\n\n"
+        f"💬 **Не проходит оплата?** Выберите другой банк или напишите в поддержку!\n\n"
+        f"📩 **После оплаты отправьте скриншот чека прямо в этот чат!**"
     )
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Як отримати квитанцію?", callback_data="how_get_receipt")],
-        [InlineKeyboardButton(text="Змінити спосіб оплати", callback_data="cat_goods")]
+        [InlineKeyboardButton(text="Как получить квитанцию?", callback_data="how_get_receipt")],
+        [InlineKeyboardButton(text="Изменить способ оплаты", callback_data="cat_goods")]
     ])
     
     await callback.message.delete()
-    if PUMB_VIDEO_FILE_ID:
-        await callback.message.answer_video(video=PUMB_VIDEO_FILE_ID, caption=caption_text, parse_mode="Markdown", reply_markup=kb)
-    else:
-        await callback.message.answer(caption_text, parse_mode="Markdown", reply_markup=kb)
-        
+    await callback.message.answer(text, parse_mode="Markdown", reply_markup=kb)
     await state.set_state(OrderState.waiting_for_receipt)
 
 @dp.callback_query(F.data == "pay_santander")
@@ -214,44 +209,20 @@ async def pay_santander_cb(callback: types.CallbackQuery, state: FSMContext):
     price = data.get('price', '0')
     
     text = (
-        f"`{CARD_SANTANDER}`\n\n"
-        f"🏦 **Інструкція з оплати (Santander / Erste):**\n"
-        f"1. Скопіюйте номер картки вище (натисніть на нього).\n"
-        f"2. Відкрийте додаток вашого банку та перекажіть **{price}.00 UAH** (або еквівалент).\n"
-        f"3. Обов'язково збережіть чек / квитанцію про оплату.\n\n"
-        f"📩 **Після оплати відправте скріншот чека прямо в цей чат!**"
+        f"💳 **Инструкция по оплате Santander / Erste:**\n\n"
+        f"1️⃣ Нажмите на номер карты ниже, чтобы скопировать:\n`{CARD_SANTANDER}`\n\n"
+        f"2️⃣ Откройте приложение банка и переведите **{price}.00 UAH** (или эквивалент).\n"
+        f"3️⃣ Обязательно сохраните чек / квитанцию об оплате.\n\n"
+        f"📩 **После оплаты отправьте скриншот чека прямо в этот чат!**"
     )
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Як отримати квитанцію?", callback_data="how_get_receipt")],
-        [InlineKeyboardButton(text="Змінити спосіб оплати", callback_data="cat_goods")]
+        [InlineKeyboardButton(text="Как получить квитанцию?", callback_data="how_get_receipt")],
+        [InlineKeyboardButton(text="Изменить способ оплаты", callback_data="cat_goods")]
     ])
     
     await callback.message.delete()
     await callback.message.answer(text, parse_mode="Markdown", reply_markup=kb)
     await state.set_state(OrderState.waiting_for_receipt)
-
-# Универсальный ловец ЛЮБЫХ видео от админа для получения file_id
-@dp.message(F.video | F.animation | F.video_note | F.document)
-async def get_any_video_file_id(message: types.Message, state: FSMContext):
-    if message.from_user.id == ADMIN_ID:
-        fid = None
-        if message.video:
-            fid = message.video.file_id
-        elif message.animation:
-            fid = message.animation.file_id
-        elif message.video_note:
-            fid = message.video_note.file_id
-        elif message.document and message.document.mime_type and message.document.mime_type.startswith("video"):
-            fid = message.document.file_id
-
-        if fid:
-            await message.answer(f"📹 **file_id вашего видео:**\n`{fid}`\n\nСкопируйте его и вставьте в `PUMB_VIDEO_FILE_ID` в файле bot.py!", parse_mode="Markdown")
-            return
-
-    # Если бот ждёт чек от покупателя, а прислали не фото
-    current_state = await state.get_state()
-    if current_state == OrderState.waiting_for_receipt:
-        await message.answer("⚠️ Пожалуйста, отправьте именно **фотографию/скриншот** чека!")
 
 @dp.message(OrderState.waiting_for_receipt, F.photo)
 async def process_receipt_photo(message: types.Message, state: FSMContext):
@@ -269,6 +240,10 @@ async def process_receipt_photo(message: types.Message, state: FSMContext):
     
     await message.answer("✅ **Чек получен и отправлен на проверку!**\nАдминистратор проверит платеж и выдаст заказ в ближайшее время.")
     await state.clear()
+
+@dp.message(OrderState.waiting_for_receipt)
+async def process_receipt_wrong(message: types.Message):
+    await message.answer("⚠️ Пожалуйста, отправьте именно **фотографию/скриншот** чека!")
 
 @dp.message(F.text.in_(["💰 Продати Stars", "💰 Продать Stars"]))
 async def sell_stars_msg(message: types.Message, state: FSMContext):
@@ -342,7 +317,7 @@ async def reviews(message: types.Message):
 @dp.callback_query(F.data == "how_get_receipt")
 async def how_get_receipt_cb(callback: types.CallbackQuery):
     await callback.answer(
-        "Зайдіть у ваш банк ➔ Знайдіть переказ ➔ Натисніть 'Квитанція' або 'Завантажити чек' та збережіть скріншот.", 
+        "Зайдите в банк ➔ Найдите перевод ➔ Нажмите 'Квитанция' или 'Скачать чек' и сделайте скриншот.", 
         show_alert=True
     )
 
@@ -350,7 +325,7 @@ async def how_get_receipt_cb(callback: types.CallbackQuery):
 async def noop_cb(callback: types.CallbackQuery):
     await callback.answer()
 
-# Веб-сервер для прохождения проверки порта в Render
+# Веб-сервер для Render
 async def handle_ping(request):
     return web.Response(text="Bot is running!")
 
