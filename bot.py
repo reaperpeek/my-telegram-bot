@@ -1,6 +1,7 @@
 import asyncio
 import os
 import logging
+from aiohttp import web
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import CommandStart
 from aiogram.types import (
@@ -12,11 +13,11 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 
-# Новый токен подставлен
+# Переменные
 BOT_TOKEN = os.getenv("BOT_TOKEN", "8408315552:AAGrpQIl2CFfX6TWzw8iRbILzR94feL8XXo")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "7786483533"))
 
-# Сюда вставишь file_id видео после того, как скинешь его боту
+# Сюда вставите file_id видео
 PUMB_VIDEO_FILE_ID = None 
 
 # Реквизиты
@@ -101,7 +102,7 @@ async def cmd_start(message: types.Message):
     if uid not in users_db:
         users_db[uid] = {'balance_uah': 0, 'balance_stars': 0, 'lang': 'ru'}
         uname = message.from_user.username or "без юзернейма"
-        await bot.send_message(ADMIN_ID, f"👤 **Новый пользователь запустил бота!**\nЮзер: @{uname} (`{uid}`)", parse_mode="Markdown")
+        await bot.send_message(ADMIN_ID, f"👤 **Новый пользователь зашел:**\nЮзер: @{uname} (`{uid}`)", parse_mode="Markdown")
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🇺🇦 Українська", callback_data="lang_uk")],
@@ -165,7 +166,6 @@ async def cat_stars(callback: types.CallbackQuery):
     ])
     await callback.message.edit_text("⭐ **Telegram Stars**\n\nВыберите количество:", parse_mode="Markdown", reply_markup=kb)
 
-# Выбор банка при покупке
 @dp.callback_query(F.data.startswith("buy_"))
 async def choose_bank(callback: types.CallbackQuery, state: FSMContext):
     raw_item = callback.data.replace("buy_", "")
@@ -182,7 +182,6 @@ async def choose_bank(callback: types.CallbackQuery, state: FSMContext):
     ])
     await callback.message.edit_text(f"🛒 **Заказ:** {item_title}\n💰 **Сумма:** {price}.00 UAH\n\nВыберите способ оплаты:", parse_mode="Markdown", reply_markup=kb)
 
-# Оплата через ПУМБ
 @dp.callback_query(F.data == "pay_pumb")
 async def pay_pumb_cb(callback: types.CallbackQuery, state: FSMContext):
     data = await state.get_data()
@@ -208,7 +207,6 @@ async def pay_pumb_cb(callback: types.CallbackQuery, state: FSMContext):
         
     await state.set_state(OrderState.waiting_for_receipt)
 
-# Оплата через Santander / Erste
 @dp.callback_query(F.data == "pay_santander")
 async def pay_santander_cb(callback: types.CallbackQuery, state: FSMContext):
     data = await state.get_data()
@@ -230,3 +228,138 @@ async def pay_santander_cb(callback: types.CallbackQuery, state: FSMContext):
     await callback.message.delete()
     await callback.message.answer(text, parse_mode="Markdown", reply_markup=kb)
     await state.set_state(OrderState.waiting_for_receipt)
+
+# Ловец видео от админа
+@dp.message(F.video)
+async def get_video_file_id(message: types.Message):
+    if message.from_user.id == ADMIN_ID:
+        fid = message.video.file_id
+        await message.answer(f"📹 **file_id вашего видео:**\n`{fid}`\n\nВставьте его в `PUMB_VIDEO_FILE_ID` в файле bot.py!", parse_mode="Markdown")
+
+@dp.message(OrderState.waiting_for_receipt, F.photo)
+async def process_receipt_photo(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    uid = message.from_user.id
+    uname = message.from_user.username or "без юзернейма"
+    photo_id = message.photo[-1].file_id
+    
+    await bot.send_photo(
+        ADMIN_ID, 
+        photo_id, 
+        caption=f"🧾 **НОВЫЙ ЧЕК ОБ ОПЛАТЕ!**\n\nПользователь: @{uname} (`{uid}`)\nТовар: {data.get('item_name')}\nСумма: {data.get('price')} UAH", 
+        parse_mode="Markdown"
+    )
+    
+    await message.answer("✅ **Чек получен и отправлен на проверку!**\nАдминистратор проверит платеж и выдаст заказ в ближайшее время.")
+    await state.clear()
+
+@dp.message(OrderState.waiting_for_receipt)
+async def process_receipt_wrong(message: types.Message):
+    await message.answer("⚠️ Пожалуйста, отправьте именно **фотографию/скриншот** чека!")
+
+@dp.message(F.text.in_(["💰 Продати Stars", "💰 Продать Stars"]))
+async def sell_stars_msg(message: types.Message, state: FSMContext):
+    await message.answer("💰 **Продажа Stars**\n\nМинимальное количество: **500 ⭐**\nКурс: **500 ⭐ = 360 UAH**\n\nВведите количество звезд, которое хотите продать:")
+    await state.set_state(OrderState.waiting_for_sell_stars)
+
+@dp.message(OrderState.waiting_for_sell_stars)
+async def process_sell_stars(message: types.Message, state: FSMContext):
+    try:
+        val = int(message.text)
+        if val < 500:
+            await message.answer("❌ Минимальная сумма продажи — 500 ⭐. Введите еще раз:")
+            return
+        payout = int((val / 500) * 360)
+        await state.update_data(item_name=f"Продажа {val} ⭐", price=payout)
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Подтвердить заявку", callback_data="confirm_sell")]
+        ])
+        await message.answer(f"За **{val} ⭐** вы получите **{payout} UAH**.\n\nНажмите кнопку ниже для связи с менеджером.", parse_mode="Markdown", reply_markup=kb)
+    except ValueError:
+        await message.answer("Пожалуйста, введите целое число.")
+
+@dp.callback_query(F.data == "confirm_sell")
+async def confirm_sell_cb(callback: types.CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    uid = callback.from_user.id
+    uname = callback.from_user.username or "без юзернейма"
+    await bot.send_message(ADMIN_ID, f"🔔 **НОВАЯ ЗАЯВКА НА ПРОДАЖУ STARS!**\n\nПользователь: @{uname} (`{uid}`)\nСделка: {data.get('item_name')}\nК выплате: {data.get('price')} UAH", parse_mode="Markdown")
+    await callback.message.edit_text("✅ Заявка отправлена администратору! Скоро с вами свяжутся.")
+    await state.clear()
+
+@dp.message(F.text.in_(["👤 Профіль", "👤 Профиль"]))
+async def profile(message: types.Message):
+    uid = message.from_user.id
+    u = users_db.get(uid, {'balance_uah': 0, 'balance_stars': 0})
+    await message.answer(f"ℹ️ **Информация о вас:**\n\n🆔 ID: `{uid}`\n✨ Баланс: {u['balance_uah']} UAH ~ {u['balance_stars']} ⭐", parse_mode="Markdown")
+
+@dp.message(F.text.in_(["🧮 Порахувати", "🧮 Посчитать"]))
+async def calc_menu(message: types.Message):
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✨ Порахувати гривні в зірках", callback_data="calc_uah_to_stars")]
+    ])
+    await message.answer("Оберіть варіант нижче ⤵️", reply_markup=kb)
+
+@dp.callback_query(F.data == "calc_uah_to_stars")
+async def ask_uah(callback: types.CallbackQuery, state: FSMContext):
+    await callback.message.answer("Введіть суму в UAH:")
+    await state.set_state(OrderState.calc_uah)
+
+@dp.message(OrderState.calc_uah)
+async def res_uah(message: types.Message, state: FSMContext):
+    try:
+        val = float(message.text)
+        stars = int(val * 1.25)
+        await message.answer(f"За {val} UAH ви отримаєте ~{stars} ⭐")
+    except ValueError:
+        await message.answer("Будь ласка, введіть число.")
+    await state.clear()
+
+@dp.message(F.text.in_(["👨‍💻 Підтримка / FAQ", "👨‍💻 Поддержка / FAQ"]))
+async def faq(message: types.Message):
+    await message.answer("💬 **FAQ:**\n\nПо всем вопросам: @reaperpeek", parse_mode="Markdown")
+
+@dp.message(F.text.in_(["💬 Відгуки", "💬 Отзывы"]))
+async def reviews(message: types.Message):
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Отзывы ➡️", url="https://t.me/telegram")]
+    ])
+    await message.answer("💬 **Отзывы покупателей:**", reply_markup=kb)
+
+@dp.callback_query(F.data == "how_get_receipt")
+async def how_get_receipt_cb(callback: types.CallbackQuery):
+    await callback.answer(
+        "Зайдіть у ваш банк ➔ Знайдіть переказ ➔ Натисніть 'Квитанція' або 'Завантажити чек' та збережіть скріншот.", 
+        show_alert=True
+    )
+
+@dp.callback_query(F.data == "noop")
+async def noop_cb(callback: types.CallbackQuery):
+    await callback.answer()
+
+# Фейковый веб-сервер для удержания порта в Render Free Tier Web Service
+async def handle_ping(request):
+    return web.Response(text="Bot is running!")
+
+async def start_web_server():
+    app = web.Application()
+    app.router.add_get('/', handle_ping)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = int(os.getenv("PORT", 10000))
+    site = web.TCPSite(runner, '0.0.0.0', port)
+    await site.start()
+    logging.info(f"Dummy HTTP server started on port {port}")
+
+async def main():
+    # Запускаем фоновый веб-сервер для Render
+    await start_web_server()
+    
+    await bot.delete_my_commands()
+    await bot.set_my_commands([BotCommand(command="start", description="Запустить бота")])
+    
+    logging.info("Starting Telegram Bot Polling...")
+    await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    asyncio.run(main())
