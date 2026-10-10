@@ -1,5 +1,7 @@
 import asyncio
 import logging
+import os
+from aiohttp import web
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
@@ -43,7 +45,6 @@ dp = Dispatcher()
 
 def get_user(user_id: int):
     if user_id not in user_db:
-        # Ставим стартовые балансы для теста, при желании можно обнулить до 0
         user_db[user_id] = {
             "balance_stars": 100,
             "balance_gold": 200,
@@ -441,7 +442,7 @@ async def receive_payment_proof(message: types.Message, state: FSMContext):
     await message.answer("✅ <b>Чек отправлен на модерацию!</b>\nОжидайте подтверждения администратора.", parse_mode="HTML")
     await state.clear()
 
-# --- НОВЫЙ БЛОК: ВЫВОД СРЕДСТВ И ЛИМИТЫ (ГОЛД ОТ 100, СТАРС ОТ 50) ---
+# --- ВЫВОД СРЕДСТВ И ЛИМИТЫ (ГОЛД ОТ 100, СТАРС ОТ 50) ---
 @dp.callback_query(F.data == "menu_withdraw")
 async def start_withdraw_menu(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(OrderState.waiting_for_withdraw_amount)
@@ -467,4 +468,5 @@ async def process_withdraw_amount(message: types.Message, state: FSMContext):
         if amount < 100:
             await message.answer("❌ Минимальная сумма для вывода Gold — <b>100 Gold</b>.", parse_mode="HTML")
             return
-      
+        if u["balance_gold"] < amount:
+            await messa
