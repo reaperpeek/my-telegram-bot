@@ -14,9 +14,17 @@ from aiogram.types import (
 BOT_TOKEN = "8684030373:AAH3SBGRKk41DSydEJG1H8t05SX-N_uPrmw"
 ADMIN_ID = 7706483533
 
-# Точные реквизиты
+# --- РЕКВИЗИТЫ И КУРСЫ ---
 CARD_PUMB = "4314140214993815"       # UAH (Гривны)
 CARD_PLN = "4213523416991947"        # PLN (Злотые)
+
+# КУРСЫ В ГРИВНАХ (UAH) - можешь изменить на свои цифры
+PRICE_PER_STAR_UAH = 0.90   # 1 Звезда = 0.90 грн
+PRICE_PER_GOLD_UAH = 0.50   # 1 Gold = 0.50 грн
+
+# КУРС В ЗЛОТЫХ (PLN)
+PRICE_PER_STAR_PLN = 0.09   # 1 Звезда = 0.09 PLN
+PRICE_PER_GOLD_PLN = 0.05   # 1 Gold = 0.05 PLN
 
 CHANNELS = [
     {"name": "Основной канал", "url": "https://t.me/monolit_main", "chat_id": "@monolit_main"},
@@ -47,39 +55,39 @@ def get_user(user_id: int):
         }
     return user_db[user_id]
 
-# NFT Подарки по страницам (+20 грн наценка)
+# NFT Подарки (+20 грн наценка)
 NFT_PAGES = {
     1: [
-        ("🍭 419 грн", "419_грн_Lollipop"), ("🧦 449 грн", "449_грн_Sock"),
-        ("🍦 449 грн", "449_грн_IceCream"), ("🍜 469 грн", "469_грн_Noodles"),
-        ("🦩 449 грн", "449_грн_Flamingo"), ("🐶 519 грн", "519_грн_Dog"),
-        ("❄️ 369 грн", "369_грн_2025"),     ("🎁 449 грн", "449_грн_Gift")
+        ("🍭 419 грн", "Lollipop_419_грн"), ("🧦 449 грн", "Sock_449_грн"),
+        ("🍦 449 грн", "IceCream_449_грн"), ("🍜 469 грн", "Noodles_469_грн"),
+        ("🦩 449 грн", "Flamingo_449_грн"), ("🐶 519 грн", "Dog_519_грн"),
+        ("❄️ 369 грн", "2025_369_грн"),     ("🎁 449 грн", "Gift_449_грн")
     ],
     2: [
-        ("🗽 469 грн", "469_грн_Statue"),   ("🍿 469 грн", "469_грн_Popcorn"),
-        ("🐍 409 грн", "409_грн_Snake"),    ("🧙‍♂️ 519 грн", "519_грн_Leprechaun"),
-        ("🧦 419 грн", "419_грн_Sock2"),    ("🚀 469 грн", "469_грн_Rocket"),
-        ("🍪 409 грн", "409_грн_Ginger"),   ("📖 439 грн", "439_грн_Book")
+        ("🗽 469 грн", "Statue_469_грн"),   ("🍿 469 грн", "Popcorn_469_грн"),
+        ("🐍 409 грн", "Snake_409_грн"),    ("🧙‍♂️ 519 грн", "Leprechaun_519_грн"),
+        ("🧦 419 грн", "Sock2_419_грн"),    ("🚀 469 грн", "Rocket_469_грн"),
+        ("🍪 409 грн", "Ginger_409_грн"),   ("📖 439 грн", "Book_439_грн")
     ],
     3: [
-        ("📦 409 грн", "409_грн_Box"),      ("🎒 419 грн", "419_грн_Backpack"),
-        ("💩 469 грн", "469_грн_Poop"),     ("🍭 409 грн", "409_грн_Lollipop2"),
-        ("🔘 519 грн", "519_грн_Button"),   ("🍄 509 грн", "509_грн_Mushroom"),
-        ("🌻 549 грн", "549_грн_Seeds"),    ("🎩 819 грн", "819_грн_Hat")
+        ("📦 409 грн", "Box_409_грн"),      ("🎒 419 грн", "Backpack_419_грн"),
+        ("💩 469 грн", "Poop_469_грн"),     ("🍭 409 грн", "Lollipop2_409_грн"),
+        ("🔘 519 грн", "Button_519_грн"),   ("🍄 509 грн", "Mushroom_509_грн"),
+        ("🌻 549 грн", "Seeds_549_грн"),    ("🎩 819 грн", "Hat_819_грн")
     ],
     4: [
-        ("🎂 449 грн", "449_грн_Cake"),     ("🏅 469 грн", "469_грн_Medal"),
-        ("🌙 559 грн", "559_грн_Moon"),     ("🐰 499 грн", "499_грн_Rabbit"),
-        ("🍀 499 грн", "499_грн_Clover"),   ("👁 649 грн", "649_грн_Eye"),
-        ("🐒 659 грн", "659_грн_Monkey"),   ("⚔️ 619 грн", "619_грн_Sword")
+        ("🎂 449 грн", "Cake_449_грн"),     ("🏅 469 грн", "Medal_469_грн"),
+        ("🌙 559 грн", "Moon_559_грн"),     ("🐰 499 грн", "Rabbit_499_грн"),
+        ("🍀 499 грн", "Clover_499_грн"),   ("👁 649 грн", "Eye_649_грн"),
+        ("🐒 659 грн", "Monkey_659_грн"),   ("⚔️ 619 грн", "Sword_619_грн")
     ],
     5: [
-        ("🚬 1219 грн", "1219_грн_Cigar"),  ("🦯 369 грн", "369_грн_Cane"),
-        ("💐 519 грн", "519_грн_Bouquet")
+        ("🚬 1219 грн", "Cigar_1219_грн"),  ("🦯 369 грн", "Cane_369_грн"),
+        ("💐 519 грн", "Bouquet_519_грн")
     ]
 }
 
-# --- СТАРТ И ВЫБОР ЯЗЫКА ---
+# --- СТАРТ И ПОДПИСКА ---
 @dp.message(CommandStart())
 async def cmd_start(message: types.Message, state: FSMContext):
     await state.clear()
@@ -173,7 +181,7 @@ async def show_ref(message: types.Message):
 async def show_other(message: types.Message):
     await message.answer(f"🎮 По всем вопросам и заказу для других игр обращайтесь в ЛС: {SUPPORT_USERNAME}")
 
-# --- ПОКУПКА ---
+# --- ПОКУПКА STARSИ GOLD ---
 @dp.message(F.text == "🌟 Купить Stars")
 async def buy_stars(message: types.Message):
     kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -229,11 +237,11 @@ async def process_nft_page(callback: types.CallbackQuery):
     await send_nft_page(callback.message, page=page, edit=True)
     await callback.answer()
 
-# --- ВЫБОР ТОВАРОВ И КАСТОМНОГО КОЛИЧЕСТВА ---
+# --- ОБРАБОТКА ВЫБОРА ТОВАРА И КАСТОМА ---
 @dp.callback_query(F.data.startswith("item_"))
 async def process_item_choice(callback: types.CallbackQuery, state: FSMContext):
     parts = callback.data.split("_")
-    item_type = parts[1]
+    item_type = parts[1] # Stars, Gold, NFT
     value = "_".join(parts[2:])
     
     if value == "custom":
@@ -243,25 +251,32 @@ async def process_item_choice(callback: types.CallbackQuery, state: FSMContext):
         await callback.answer()
         return
         
-    item_name = f"{value.replace('_', ' ')} {item_type}"
-    await state.update_data(chosen_item=item_name)
+    if item_type == "NFT":
+        item_name = f"NFT {value.replace('_', ' ')}"
+        amount = 1
+    else:
+        amount = int(value)
+        item_name = f"{amount} {item_type}"
+        
+    await state.update_data(chosen_item=item_name, item_type=item_type, item_amount=amount)
     await show_currency_selection(callback.message, item_name, edit=True)
     await callback.answer()
 
 @dp.message(OrderState.waiting_for_custom_amount)
 async def process_custom_amount(message: types.Message, state: FSMContext):
     data = await state.get_data()
-    item_type = data.get("item_type", "Item")
-    amount = message.text.strip()
+    item_type = data.get("item_type", "Stars")
+    amount_text = message.text.strip()
     
-    if not amount.isdigit():
+    if not amount_text.isdigit():
         await message.answer("❌ Пожалуйста, введите корректное число!")
         return
         
+    amount = int(amount_text)
     item_name = f"{amount} {item_type}"
-    await state.update_data(chosen_item=item_name)
+    
+    await state.update_data(chosen_item=item_name, item_type=item_type, item_amount=amount)
     await show_currency_selection(message, item_name, edit=False)
-    await state.set_state(None)
 
 async def show_currency_selection(message: types.Message, item_name: str, edit: bool = False):
     kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -277,13 +292,34 @@ async def show_currency_selection(message: types.Message, item_name: str, edit: 
     else:
         await message.answer(text, reply_markup=kb, parse_mode="HTML")
 
-# --- ВЫДАЧА РЕКВИЗИТОВ И ОЖИДАНИЕ ЧЕКА ---
+# --- ВЫДАЧА РЕКВИЗИТОВ И РАСЧЕТ ЦЕНЫ ---
 @dp.callback_query(F.data.startswith("pay_"))
 async def process_currency_choice(callback: types.CallbackQuery, state: FSMContext):
     currency = callback.data.replace("pay_", "").replace("_", "/")
-    await state.update_data(chosen_currency=currency)
     data = await state.get_data()
-    item = data.get("chosen_item", "Товар")
+    
+    item_name = data.get("chosen_item", "Товар")
+    item_type = data.get("item_type", "Stars")
+    amount = data.get("item_amount", 1)
+    
+    # Считаем точную цену
+    price_str = ""
+    if item_type == "Stars":
+        if "UAH" in currency:
+            total = round(amount * PRICE_PER_STAR_UAH, 2)
+            price_str = f"К оплате: <b>{total} UAH</b>"
+        elif "PLN" in currency:
+            total = round(amount * PRICE_PER_STAR_PLN, 2)
+            price_str = f"К оплате: <b>{total} PLN</b>"
+    elif item_type == "Gold":
+        if "UAH" in currency:
+            total = round(amount * PRICE_PER_GOLD_UAH, 2)
+            price_str = f"К оплате: <b>{total} UAH</b>"
+        elif "PLN" in currency:
+            total = round(amount * PRICE_PER_GOLD_PLN, 2)
+            price_str = f"К оплате: <b>{total} PLN</b>"
+
+    await state.update_data(chosen_currency=currency, price_info=price_str)
     
     card_info = ""
     if "UAH" in currency:
@@ -293,8 +329,10 @@ async def process_currency_choice(callback: types.CallbackQuery, state: FSMConte
     else:
         card_info = f"Для получения реквизитов напишите оператору: {SUPPORT_USERNAME}"
         
+    price_display = f"\n💰 {price_str}\n" if price_str else ""
+    
     text = (
-        f"<b>Заказ:</b> {item}\n\n"
+        f"<b>Заказ:</b> {item_name}{price_display}\n"
         f"<b>Реквизиты для оплаты:</b>\n{card_info}\n\n"
         f"💬 <i>Не проходит оплата? Выберите другой банк или пишите в поддержку!</i>\n\n"
         f"🏦 <b>После оплаты отправьте сюда в чат скриншот оплаты или PDF-чек 👇</b>"
@@ -310,6 +348,7 @@ async def receive_payment_proof(message: types.Message, state: FSMContext):
     data = await state.get_data()
     item = data.get("chosen_item", "Товар")
     currency = data.get("chosen_currency", "Валюта")
+    price_info = data.get("price_info", "")
     user = message.from_user
     
     kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -322,7 +361,7 @@ async def receive_payment_proof(message: types.Message, state: FSMContext):
     admin_caption = (
         f"📥 <b>Новая оплата на модерацию!</b>\n\n"
         f"👤 Пользователь: @{user.username} (ID: <code>{user.id}</code>)\n"
-        f"📦 Товар: <b>{item}</b>\n"
+        f"📦 Товар: <b>{item}</b> ({price_info})\n"
         f"💳 Валюта: <b>{currency}</b>"
     )
     
@@ -350,7 +389,6 @@ async def admin_decision(callback: types.CallbackQuery):
     if action == "accept":
         item_purchased = "_".join(parts[3:]) if len(parts) > 3 else ""
         
-        # Начисление на баланс пользователя при подтверждении оплаты
         if "Stars" in item_purchased:
             try:
                 amt = int(item_purchased.split()[0])
@@ -363,10 +401,10 @@ async def admin_decision(callback: types.CallbackQuery):
                 u["balance_gold"] += amt
             except Exception:
                 pass
-        elif "грн" in item_purchased or "NFT" in item_purchased:
+        elif "NFT" in item_purchased or "грн" in item_purchased:
             u["nft_inventory"].append(item_purchased)
             
-        await callback.message.edit_caption(caption=callback.message.caption + "\n\n✅ <b>Оплата одобрена! Средства/NFT зачислены на баланс.</b>", parse_mode="HTML")
+        await callback.message.edit_caption(caption=callback.message.caption + "\n\n✅ <b>Оплата одобрена! Средства/NFT зачислены.</b>", parse_mode="HTML")
         await bot.send_message(target_user_id, "🎉 Ваша оплата подтверждена! Товар зачислен в ваш профиль.")
     else:
         await callback.message.edit_caption(caption=callback.message.caption + "\n\n❌ <b>Оплата отклонена.</b>", parse_mode="HTML")
@@ -374,7 +412,7 @@ async def admin_decision(callback: types.CallbackQuery):
         
     await callback.answer()
 
-# --- ВЫВОД ИЗ ПРОФИЛЯ С ПРОВЕРКОЙ БАЛАНСА ---
+# --- ВЫВОД ---
 @dp.callback_query(F.data == "menu_withdraw")
 async def menu_withdraw_handler(callback: types.CallbackQuery):
     kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -398,7 +436,6 @@ async def withdraw_type_chosen(callback: types.CallbackQuery, state: FSMContext)
         kb = InlineKeyboardMarkup(inline_keyboard=buttons)
         await callback.message.edit_text("🖼 Выберите NFT для вывода:", reply_markup=kb, parse_mode="HTML")
     else:
-        # Проверка баланса перед вводом суммы
         if wd_type == "Stars" and u["balance_stars"] < 50:
             await callback.answer("❌ Недостаточно звезд на балансе! Минимальный вывод: 50 ⭐", show_alert=True)
             return
@@ -427,7 +464,6 @@ async def process_withdraw_amount(message: types.Message, state: FSMContext):
         
     amount = int(amount_text)
     
-    # Проверки по суммам и балансу
     if wd_type == "Stars":
         if amount < 50:
             await message.answer("❌ Минимальная сумма вывода — 50 Stars!")
@@ -500,8 +536,6 @@ async def admin_withdraw_decision(callback: types.CallbackQuery):
     
     if action == "done":
         item_type = parts[3]
-        
-        # Списание средств/NFT с баланса после одобрения вывода
         if item_type == "Stars":
             amt = int(parts[4])
             u["balance_stars"] = max(0, u["balance_stars"] - amt)
