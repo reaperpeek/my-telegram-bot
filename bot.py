@@ -19,8 +19,8 @@ CARD_PUMB = "4314140214993815"       # UAH (Гривны ПУМБ)
 CARD_PLN = "4213523416991947"        # PLN (Злотые)
 
 PRICE_PER_GOLD_UAH = 0.42  # 1 Gold = 0.42 грн
-PRICE_PER_GRAM_UAH = 65.75 # 1 GRAM = 65.75 UAH
-UAH_TO_PLN_RATE = 0.0873   # 1 UAH = 0.0873 PLN (по курсу из скрина)
+PRICE_PER_GRAM_UAH = 65.75 # 1 GRAM = 65.75 UAH (CoinMarketCap)
+UAH_TO_PLN_RATE = 0.0873   # 1 UAH = 0.0873 PLN
 
 CHANNELS = [
     {"name": "Основной канал", "url": "https://t.me/monolit_main", "chat_id": "@monolit_main"},
@@ -428,7 +428,7 @@ async def receive_payment_proof(message: types.Message, state: FSMContext):
     admin_caption = (
         f"📥 <b>Новая оплата на модерацию!</b>\n\n"
         f"👤 Пользователь: @{user.username} (ID: <code>{user.id}</code>)\n"
-        f"📦 Товар: <b>{item}</b> ({price_info})\n"
+        f"📦 Заказ: <b>{item}</b> ({price_info})\n"
         f"💳 Валюта: <b>{currency}</b>"
     )
     
