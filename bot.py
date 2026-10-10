@@ -446,4 +446,47 @@ async def admin_decision(callback: types.CallbackQuery):
     target_user_id = int(parts[2])
     u = get_user(target_user_id)
     
-    if act
+    if action_type == "adm":
+        if action == "accept":
+            item_purchased = "_".join(parts[3:]) if len(parts) > 3 else ""
+            if "Stars" in item_purchased:
+                try: u["balance_stars"] += int(item_purchased.split()[0])
+                except: pass
+            elif "Gold" in item_purchased:
+                try: u["balance_gold"] += int(item_purchased.split()[0])
+                except: pass
+            elif "NFT" in item_purchased or "грн" in item_purchased:
+                u["nft_inventory"].append(item_purchased)
+            
+            if callback.message.photo or callback.message.document:
+                await callback.message.edit_caption(caption=callback.message.caption + "\n\n✅ <b>Одобрено и зачислено!</b>", parse_mode="HTML")
+            else:
+                await callback.message.edit_text(text=callback.message.text + "\n\n✅ <b>Одобрено!</b>", parse_mode="HTML")
+            await bot.send_message(target_user_id, "🎉 Ваша оплата подтверждена! Товар зачислен.", parse_mode="HTML")
+        else:
+            if callback.message.photo or callback.message.document:
+                await callback.message.edit_caption(caption=callback.message.caption + "\n\n❌ <b>Отклонено.</b>", parse_mode="HTML")
+            else:
+                await callback.message.edit_text(text=callback.message.text + "\n\n❌ <b>Отклонено.</b>", parse_mode="HTML")
+            await bot.send_message(target_user_id, "❌ Ваша оплата отклонена администратором.")
+
+    elif action_type == "wd":
+        if action == "accept":
+            withdraw_text = "_".join(parts[3:]) if len(parts) > 3 else "средства"
+            await callback.message.edit_text(text=callback.message.text + "\n\n✅ <b>ВЫВОД ПОДТВЕРЖДЕН</b>", parse_mode="HTML")
+            await bot.send_message(target_user_id, f"🎉 Вывод подтвержден! Переведено: <b>{withdraw_text}</b>.", parse_mode="HTML")
+        else:
+            await callback.message.edit_text(text=callback.message.text + "\n\n❌ <b>ВЫВОД ОТКЛОНЕН</b>", parse_mode="HTML")
+            await bot.send_message(target_user_id, "❌ Ваш запрос на вывод средств отклонен.")
+
+async def main():
+    try:
+        await bot.delete_webhook(drop_pending_updates=True)
+    except Exception:
+        pass
+    print("Бот успешно запущен!")
+    await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    asyncio.run(main())
