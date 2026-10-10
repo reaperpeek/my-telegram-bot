@@ -357,29 +357,37 @@ async def process_currency_choice(callback: types.CallbackQuery, state: FSMConte
     await callback.message.edit_text(text, parse_mode="HTML")
     await callback.answer()
 
-@dp.message(OrderState.waiting_for_payment_proof, F.photo | F.document)
+# --- ОБРАБОТЧИК ЧЕКОВ (ПРИЕМ ЛЮБОГО СООБЩЕНИЯ/ФОТО ПОСЛЕ ВЫБОРА РЕКВИЗИТОВ) ---
+@dp.message(OrderState.waiting_for_payment_proof)
 async def receive_payment_proof(message: types.Message, state: FSMContext):
     data = await state.get_data()
     item = data.get("chosen_item", "Товар")
     currency = data.get("chosen_currency", "Валюта")
     price_info = data.get("price_info", "")
     user = message.from_user
-    
+    username_text = f"@{user.username}" if user.username else f"ID: {user.id}"
+
     kb = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="✅ Принять (Начислить)", callback_data=f"adm_accept_{user.id}_{item}"),
+        InlineKeyboardButton(text="✅ Начислить на баланс", callback_data=f"adm_accept_{user.id}_{item}"),
         InlineKeyboardButton(text="❌ Отклонить", callback_data=f"adm_reject_{user.id}")
     ]])
+    
     admin_caption = (
         f"📥 <b>Новая оплата на модерацию!</b>\n\n"
-        f"👤 Пользователь: @{user.username} (ID: <code>{user.id}</code>)\n"
-        f"📦 Заказ: <b>{item}</b> ({price_info})\n"
+        f"👤 Пользователь {username_text} приобрел <b>{item}</b> ({price_info})\n"
         f"💳 Валюта: <b>{currency}</b>"
     )
+
+    # Пересылаем админу фото или документ
     if message.photo:
         await bot.send_photo(chat_id=ADMIN_ID, photo=message.photo[-1].file_id, caption=admin_caption, reply_markup=kb, parse_mode="HTML")
     elif message.document:
         await bot.send_document(chat_id=ADMIN_ID, document=message.document.file_id, caption=admin_caption, reply_markup=kb, parse_mode="HTML")
-    await message.answer("✅ <b>Чек отправлен на модерацию!</b>", parse_mode="HTML")
+    else:
+        # Если отправили просто текст вместо квитанции
+        await bot.send_message(chat_id=ADMIN_ID, text=f"{admin_caption}\n\n💬 Текст пользователя: {message.text}", reply_markup=kb, parse_mode="HTML")
+
+    await message.answer("✅ <b>Чек отправлен на модерацию!</b> Ожидайте проверки администратором.", parse_mode="HTML")
     await state.clear()
 
 @dp.callback_query(F.data == "menu_withdraw")
@@ -424,9 +432,11 @@ async def process_withdraw_amount(message: types.Message, state: FSMContext):
         InlineKeyboardButton(text="❌ Отклонить", callback_data=f"wd_reject_{user_id}")
     ]])
 
+    username_text = f"@{message.from_user.username}" if message.from_user.username else f"ID: {user_id}"
+
     admin_caption = (
         f"📤 <b>ЗАПРОС НА ВЫВОД!</b>\n\n"
-        f"👤 Юзер: @{message.from_user.username or 'нет'} (ID: <code>{user_id}</code>)\n\n"
+        f"👤 Юзер: {username_text} (ID: <code>{user_id}</code>)\n\n"
         f"💰 <b>Баланс юзера:</b>\n"
         f"• Stars: <b>{u['balance_stars']} ⭐</b>\n"
         f"• Gold: <b>{u['balance_gold']} 🥇</b>\n"
@@ -482,7 +492,6 @@ async def admin_decision(callback: types.CallbackQuery):
             await callback.message.edit_text(text=callback.message.text + "\n\n❌ <b>ВЫВОД ОТКЛОНЕН</b>", parse_mode="HTML")
             await bot.send_message(target_user_id, "❌ Ваш запрос на вывод средств отклонен.")
 
-# --- ВЕБ-СЕРВЕР ДЛЯ ПРОХОЖДЕНИЯ ПРОВЕРКИ ПОРТА RENDER ---
 class SimpleHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -497,17 +506,13 @@ def run_http():
     server.serve_forever()
 
 async def main():
-    # Запуск сервера для Render в фоновом потоке
     threading.Thread(target=run_http, daemon=True).start()
-    
     try:
         await bot.delete_webhook(drop_pending_updates=True)
     except Exception:
         pass
-        
-    print("Бот успешно запущен!")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-    asyncio.run(main())
+    asyncio.run(main()) 
