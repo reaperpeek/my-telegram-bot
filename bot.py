@@ -401,7 +401,48 @@ async def start_withdraw_menu(callback: types.CallbackQuery, state: FSMContext):
     )
     await callback.answer()
 
-@dp.message(OrderState.waiting_for_withdraw_amount)
+@dp.message(OrderState.waiting_for_payment_proof, F.photo | F.document | F.text)
+async def receive_payment_proof(message: types.Message, state: FSMContext):
+    print("--- ПОЛУЧЕН ЧЕК ОТ ПОЛЬЗОВАТЕЛЯ ---")
+    data = await state.get_data()
+    print(f"Данные стейта: {data}")
+    
+    item = data.get("chosen_item", "Товар")
+    currency = data.get("chosen_currency", "Валюта")
+    price_info = data.get("price_info", "")
+    user = message.from_user
+    username_text = f"@{user.username}" if user.username else f"ID: {user.id}"
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="✅ Начислить на баланс", callback_data=f"adm_accept_{user.id}_{item}"),
+        InlineKeyboardButton(text="❌ Отклонить", callback_data=f"adm_reject_{user.id}")
+    ]])
+    
+    admin_caption = (
+        f"📥 <b>Новая оплата на модерацию!</b>\n\n"
+        f"👤 Пользователь {username_text} приобрел <b>{item}</b> ({price_info})\n"
+        f"💳 Валюта: <b>{currency}</b>"
+    )
+
+    try:
+        if message.photo:
+            print("Отправка фото админу...")
+            await bot.send_photo(chat_id=7786483533, photo=message.photo[-1].file_id, caption=admin_caption, reply_markup=kb, parse_mode="HTML")
+        elif message.document:
+            print("Отправка документа админу...")
+            await bot.send_document(chat_id=7786483533, document=message.document.file_id, caption=admin_caption, reply_markup=kb, parse_mode="HTML")
+        else:
+            print("Отправка текста админу...")
+            await bot.send_message(chat_id=7786483533, text=f"{admin_caption}\n\n💬 Текст: {message.text}", reply_markup=kb, parse_mode="HTML")
+        
+        print("Успешно отправлено админу!")
+    except Exception as e:
+        print(f"ОШИБКА ПРИ ОТПРАВКЕ АДМИНУ: {e}")
+
+    await message.answer("✅ <b>Чек отправлен на модерацию!</b> Ожидайте проверки администратором.", parse_mode="HTML")
+    await state.clear()
+
+
 async def process_withdraw_amount(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
     u = get_user(user_id)
