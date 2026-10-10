@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import Command
@@ -7,33 +8,31 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.storage.memory import MemoryStorage
 
-# Замени на свои данные
-BOT_TOKEN = "ТВОЙ_ТОКЕН_БОТА"
-ADMIN_ID = 123456789  # Твой цифровой Telegram ID
+# Токен подтягивается из переменных окружения Render или прописан здесь
+BOT_TOKEN = os.getenv("8684030373:AAH3SBGRKk41DSydEJG1H8t05SX-N_uPrmw", "ТВОЙ_ТОКЕН")
+ADMIN_ID = 7786483533  # Твой ID администратора
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 router = Router()
 
-# Состояния FSM
 class OrderState(StatesGroup):
     waiting_for_receipt = State()
 
 class WithdrawState(StatesGroup):
     waiting_for_amount = State()
 
-# База данных пользователей в памяти (для примера)
-# Пример: { user_id: {"balance_stars": 100, "balance_gold": 250, "inventory": []} }
+# База данных пользователей
 users_db = {}
 
 @router.message(Command("start"))
-async def cmd_start(message: Message):
+async def cmd_start(message: Message, state: FSMContext):
     user_id = message.from_user.id
     if user_id not in users_db:
         users_db[user_id] = {"balance_stars": 100, "balance_gold": 200, "inventory": []}
     
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🛍 Купить Stars / Gold", callback_data="buy_menu")],
+        [InlineKeyboardButton(text="🛍 Купить Stars / Gold / NFT", callback_data="buy_menu")],
         [InlineKeyboardButton(text="📤 Вывести средства", callback_data="start_withdraw")]
     ])
     
@@ -43,23 +42,21 @@ async def cmd_start(message: Message):
         f"💰 Твой баланс:\n"
         f"• Stars: {user_data['balance_stars']}\n"
         f"• Gold: {user_data['balance_gold']}\n\n"
-        f"Выбери действие:",
+        f"Выбери нужный раздел:",
         reply_markup=kb
     )
-
-# --- БЛОК ПОКУПКИ И ОПЛАТЫ ---
 
 @router.callback_query(F.data == "buy_menu")
 async def buy_menu(call: CallbackQuery):
     await call.message.answer(
-        "Напиши в чат название товара, который хочешь купить (например: `Купить 200 Stars` или `Купить 100 Gold`), чтобы получить реквизиты.",
+        "Напиши в чат товар, который хочешь приобрести (например: `Купить 200 Stars` или `Купить 100 Gold`), чтобы получить реквизиты ПУМБ.",
         parse_mode="Markdown"
     )
 
 @router.message(F.text.lower().startswith("купить"))
 async def start_payment(message: Message, state: FSMContext):
     item_name = message.text
-    price = 170.8  # Пример суммы к оплате в UAH
+    price = 42.0  # Сумма к оплате
     
     await state.set_state(OrderState.waiting_for_receipt)
     await state.update_data(item_name=item_name, price=price)
@@ -67,7 +64,7 @@ async def start_payment(message: Message, state: FSMContext):
     await message.answer(
         f"Заказ: {item_name}\n"
         f"💳 К оплате: {price} UAH\n\n"
-        f"Реквизиты для оплаты:\n`4314140214993815` (ПУМБ)\n\n"
+        f"Реквизиты для оплаты (ПУМБ):\n`4314140214993815`\n\n"
         f"📸 **После оплаты отправьте сюда скриншот или PDF-чек.**",
         parse_mode="Markdown"
     )
@@ -101,7 +98,7 @@ async def process_receipt(message: Message, state: FSMContext):
 
 @router.message(OrderState.waiting_for_receipt)
 async def invalid_receipt(message: Message):
-    await message.answer("Пожалуйста, отправьте именно **скриншот (фото)** или **PDF-файл** чека.")
+    await message.answer("Пожалуйста, отправьте именно скриншот (фото) или PDF-файл чека.")
 
 @router.callback_query(F.data.startswith("pay_confirm:"))
 async def confirm_payment(call: CallbackQuery):
@@ -120,8 +117,8 @@ async def confirm_payment(call: CallbackQuery):
         await bot.send_message(
             user_id,
             f"🎉 **Оплата подтверждена!**\n"
-            f"Товар/баланс ({item_name}) успешно зачислен на ваш счет в боте.\n\n"
-            f"Если хотите вывести средства, воспользуйтесь кнопками ниже."
+            f"Товар/баланс ({item_name}) успешно зачислен.\n\n"
+            f"Если хотите сделать вывод, воспользуйтесь кнопками в боте."
         )
     except Exception:
         pass
@@ -140,9 +137,7 @@ async def reject_payment(call: CallbackQuery):
 
     await call.message.edit_caption(caption=call.message.caption + "\n\n❌ **ОТКЛОНЕНО**", parse_mode="Markdown")
 
-
-# --- БЛОК ВЫВОДА СРЕДСТВ И ЛИМИТОВ ---
-
+# Блок вывода с лимитами и проверкой баланса
 @router.callback_query(F.data == "start_withdraw")
 async def start_withdraw(call: CallbackQuery, state: FSMContext):
     await state.set_state(WithdrawState.waiting_for_amount)
@@ -162,7 +157,6 @@ async def process_withdraw_request(message: Message, state: FSMContext):
     text = message.text.lower().strip()
     amount = int(''.join(filter(str.isdigit, text)) or 0)
 
-    # Проверка лимитов и баланса
     if "gold" in text or "голд" in text:
         if amount < 100:
             await message.answer("❌ Минимальная сумма для вывода Gold — **100 Gold**.")
@@ -211,8 +205,7 @@ async def confirm_withdraw(call: CallbackQuery):
             user_id,
             f"🎉 **Вывод подтвержден!**\n\n"
             f"Вам переведено: **{withdraw_text}**.\n"
-            f"Средства успешно выданы.\n\n"
-            f"Если хотите сделать еще операцию, воспользуйтесь ботом."
+            f"Если хотите сделать еще операцию, воспользуйтесь кнопками ниже."
         )
     except Exception:
         pass
@@ -229,8 +222,7 @@ async def reject_withdraw(call: CallbackQuery):
     except Exception:
         pass
 
-    await call.message.edit_text(text=call.message.text + "\n\n❌ **ОТКЛОНЕНО**", parse_mode="Markdown")
-
+    await call.message.edit_text(text=call.message.text + "\n\n❌ **Отклонено**", parse_mode="Markdown")
 
 async def main():
     dp.include_router(router)
@@ -239,4 +231,3 @@ async def main():
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     asyncio.run(main())
-    
