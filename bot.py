@@ -1,7 +1,6 @@
 import asyncio
 import logging
 import os
-import threading
 from aiohttp import web
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import CommandStart
@@ -17,13 +16,12 @@ from aiogram.types import (
 BOT_TOKEN = "8684030373:AAF653ZjZlX1wBkklfve0h_QLoXawa3-k4s"
 ADMIN_ID = 7706483533
 
-# --- РЕКВИЗИТЫ И КУРСЫ ---
-CARD_PUMB = "4314140214993815"       # UAH (Гривны ПУМБ)
-CARD_PLN = "4213523416991947"        # PLN (Злотые)
+CARD_PUMB = "4314140214993815"
+CARD_PLN = "4213523416991947"
 
-PRICE_PER_GOLD_UAH = 0.42  # 1 Gold = 0.42 грн
-PRICE_PER_GRAM_UAH = 65.75 # 1 GRAM = 65.75 UAH
-UAH_TO_PLN_RATE = 0.0873   # 1 UAH = 0.0873 PLN
+PRICE_PER_GOLD_UAH = 0.42
+PRICE_PER_GRAM_UAH = 65.75
+UAH_TO_PLN_RATE = 0.0873
 
 CHANNELS = [
     {"name": "Основной канал", "url": "https://t.me/monolit_main", "chat_id": "@monolit_main"},
@@ -442,4 +440,10 @@ async def process_withdraw_amount(message: types.Message, state: FSMContext):
 async def admin_decision(callback: types.CallbackQuery):
     if callback.from_user.id != ADMIN_ID:
         await callback.answer("У вас нет прав!", show_alert=True)
- 
+        return
+        
+    parts = callback.data.split("_")
+    action_type = parts[0]
+    action = parts[1]
+    target_user_id = int(parts[2])
+    u = get_us
