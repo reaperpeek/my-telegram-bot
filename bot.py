@@ -1,5 +1,8 @@
 import asyncio
 import logging
+import os
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
@@ -479,11 +482,29 @@ async def admin_decision(callback: types.CallbackQuery):
             await callback.message.edit_text(text=callback.message.text + "\n\n❌ <b>ВЫВОД ОТКЛОНЕН</b>", parse_mode="HTML")
             await bot.send_message(target_user_id, "❌ Ваш запрос на вывод средств отклонен.")
 
+# --- ВЕБ-СЕРВЕР ДЛЯ ПРОХОЖДЕНИЯ ПРОВЕРКИ ПОРТА RENDER ---
+class SimpleHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"OK")
+    def log_message(self, format, *args):
+        pass
+
+def run_http():
+    port = int(os.environ.get("PORT", 8080))
+    server = HTTPServer(('0.0.0.0', port), SimpleHandler)
+    server.serve_forever()
+
 async def main():
+    # Запуск сервера для Render в фоновом потоке
+    threading.Thread(target=run_http, daemon=True).start()
+    
     try:
         await bot.delete_webhook(drop_pending_updates=True)
     except Exception:
         pass
+        
     print("Бот успешно запущен!")
     await dp.start_polling(bot)
 
