@@ -19,8 +19,8 @@ CARD_PUMB = "4314140214993815"       # UAH (Гривны ПУМБ)
 CARD_PLN = "4213523416991947"        # PLN (Злотые)
 
 PRICE_PER_GOLD_UAH = 0.42  # 1 Gold = 0.42 грн
-PRICE_PER_GOLD_PLN = 0.045 # 1 Gold = 0.045 PLN
-PRICE_PER_GRAM_UAH = 65.75 # 1 GRAM = 65.75 UAH (Точный курс из CoinMarketCap)
+PRICE_PER_GRAM_UAH = 65.75 # 1 GRAM = 65.75 UAH
+UAH_TO_PLN_RATE = 0.0873   # 1 UAH = 0.0873 PLN (по курсу из скрина)
 
 CHANNELS = [
     {"name": "Основной канал", "url": "https://t.me/monolit_main", "chat_id": "@monolit_main"},
@@ -65,7 +65,8 @@ def calculate_stars_price(amount: int, currency: str) -> str:
     if "UAH" in currency:
         return f"{total_uah} UAH"
     elif "PLN" in currency:
-        return f"{round(total_uah / 10.0, 2)} PLN"
+        total_pln = round(total_uah * UAH_TO_PLN_RATE, 2)
+        return f"{total_pln} PLN"
     elif "Crypto" in currency or "GRAM" in currency:
         total_gram = round(total_uah / PRICE_PER_GRAM_UAH, 2)
         return f"{total_gram} GRAM"
@@ -84,7 +85,8 @@ def calculate_gold_price(amount: int, currency: str) -> str:
     if "UAH" in currency:
         return f"{total_uah} UAH"
     elif "PLN" in currency:
-        return f"{round(amount * PRICE_PER_GOLD_PLN, 2)} PLN"
+        total_pln = round(total_uah * UAH_TO_PLN_RATE, 2)
+        return f"{total_pln} PLN"
     elif "Crypto" in currency or "GRAM" in currency:
         total_gram = round(total_uah / PRICE_PER_GRAM_UAH, 2)
         return f"{total_gram} GRAM"
@@ -102,7 +104,8 @@ def calculate_nft_price(uah_price: int, currency: str) -> str:
     if "UAH" in currency:
         return f"{uah_price} UAH"
     elif "PLN" in currency:
-        return f"{round(uah_price / 10.0, 2)} PLN"
+        total_pln = round(uah_price * UAH_TO_PLN_RATE, 2)
+        return f"{total_pln} PLN"
     elif "Crypto" in currency or "GRAM" in currency:
         total_gram = round(uah_price / PRICE_PER_GRAM_UAH, 2)
         return f"{total_gram} GRAM"
@@ -470,7 +473,7 @@ async def admin_decision(callback: types.CallbackQuery):
         await callback.message.edit_caption(caption=callback.message.caption + "\n\n✅ <b>Оплата одобрена! Средства/NFT зачислены.</b>", parse_mode="HTML")
         await bot.send_message(target_user_id, "🎉 Ваша оплата подтверждена! Товар зачислен в ваш профиль.")
     else:
-        await callback.message.edit_caption(caption=caption + "\n\n❌ <b>Оплата отклонена.</b>", parse_mode="HTML")
+        await callback.message.edit_caption(caption=callback.message.caption + "\n\n❌ <b>Оплата отклонена.</b>", parse_mode="HTML")
         await bot.send_message(target_user_id, f"❌ Оплата отклонена. Свяжитесь с поддержкой: {SUPPORT_USERNAME}")
         
     await callback.answer()
