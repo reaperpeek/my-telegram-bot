@@ -14,7 +14,7 @@ from aiogram.types import (
     ReplyKeyboardMarkup
 )
 
-BOT_TOKEN = "8684030373:AAH3SBGRKk41DSydEJG1H8t05SX-N_uPrmw"
+BOT_TOKEN = "8684030373:AAF653ZjZlX1wBkklfve0h_QLoXawa3-k4s"
 ADMIN_ID = 7706483533
 
 # --- РЕКВИЗИТЫ И КУРСЫ ---
