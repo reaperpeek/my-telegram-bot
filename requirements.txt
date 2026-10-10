@@ -1,3 +1,1 @@
-aiogram
-aiohttp
-pydantic
+aiogram>=3.0.0
