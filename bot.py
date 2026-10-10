@@ -15,11 +15,12 @@ BOT_TOKEN = "8684030373:AAH3SBGRKk41DSydEJG1H8t05SX-N_uPrmw"
 ADMIN_ID = 7706483533
 
 # --- РЕКВИЗИТЫ И КУРСЫ ---
-CARD_PUMB = "4314140214993815"       # UAH (Гривны)
+CARD_PUMB = "4314140214993815"       # UAH (Гривны ПУМБ)
 CARD_PLN = "4213523416991947"        # PLN (Злотые)
 
 PRICE_PER_GOLD_UAH = 0.42  # 1 Gold = 0.42 грн
 PRICE_PER_GOLD_PLN = 0.045 # 1 Gold = 0.045 PLN
+PRICE_PER_GRAM_UAH = 65.75 # 1 GRAM = 65.75 UAH (Точный курс из CoinMarketCap)
 
 CHANNELS = [
     {"name": "Основной канал", "url": "https://t.me/monolit_main", "chat_id": "@monolit_main"},
@@ -50,7 +51,7 @@ def get_user(user_id: int):
         }
     return user_db[user_id]
 
-# Расчет цены Stars (базовый курс + 20 грн наценка)
+# Расчет цены Stars под любую валюту
 def calculate_stars_price(amount: int, currency: str) -> str:
     if amount <= 100:
         base_uah = amount * 0.88
@@ -65,22 +66,52 @@ def calculate_stars_price(amount: int, currency: str) -> str:
         return f"{total_uah} UAH"
     elif "PLN" in currency:
         return f"{round(total_uah / 10.0, 2)} PLN"
-    elif "Crypto" in currency:
-        return f"{round(total_uah / 41.0, 2)} USDT"
+    elif "Crypto" in currency or "GRAM" in currency:
+        total_gram = round(total_uah / PRICE_PER_GRAM_UAH, 2)
+        return f"{total_gram} GRAM"
+    elif "USD" in currency:
+        return f"{round(total_uah / 41.0, 2)} USD"
+    elif "EUR" in currency:
+        return f"{round(total_uah / 44.0, 2)} EUR"
+    elif "Stars" in currency:
+        return f"{amount} ⭐ Telegram Stars"
     else:
-        return f"{total_uah} UAH (эквивалент)"
+        return f"{total_uah} UAH"
 
-# Расчет цены Gold (0.42 UAH)
+# Расчет цены Gold под любую валюту
 def calculate_gold_price(amount: int, currency: str) -> str:
     total_uah = round(amount * PRICE_PER_GOLD_UAH, 2)
     if "UAH" in currency:
         return f"{total_uah} UAH"
     elif "PLN" in currency:
         return f"{round(amount * PRICE_PER_GOLD_PLN, 2)} PLN"
-    elif "Crypto" in currency:
-        return f"{round(total_uah / 41.0, 2)} USDT"
+    elif "Crypto" in currency or "GRAM" in currency:
+        total_gram = round(total_uah / PRICE_PER_GRAM_UAH, 2)
+        return f"{total_gram} GRAM"
+    elif "USD" in currency:
+        return f"{round(total_uah / 41.0, 2)} USD"
+    elif "EUR" in currency:
+        return f"{round(total_uah / 44.0, 2)} EUR"
+    elif "Stars" in currency:
+        return f"{round(total_uah / 0.8, 2)} ⭐ Stars"
     else:
         return f"{total_uah} UAH"
+
+# Расчет цены NFT под выбранную валюту
+def calculate_nft_price(uah_price: int, currency: str) -> str:
+    if "UAH" in currency:
+        return f"{uah_price} UAH"
+    elif "PLN" in currency:
+        return f"{round(uah_price / 10.0, 2)} PLN"
+    elif "Crypto" in currency or "GRAM" in currency:
+        total_gram = round(uah_price / PRICE_PER_GRAM_UAH, 2)
+        return f"{total_gram} GRAM"
+    elif "USD" in currency:
+        return f"{round(uah_price / 41.0, 2)} USD"
+    elif "EUR" in currency:
+        return f"{round(uah_price / 44.0, 2)} EUR"
+    else:
+        return f"{uah_price} UAH"
 
 # NFT Подарки (5 страниц)
 NFT_PAGES = {
@@ -266,9 +297,14 @@ async def process_nft_page(callback: types.CallbackQuery):
 # --- ВЫБОР NFT ---
 @dp.callback_query(F.data.startswith("nftitem_"))
 async def process_nft_item(callback: types.CallbackQuery, state: FSMContext):
-    nft_name = callback.data.replace("nftitem_", "")
-    await state.update_data(chosen_item=f"NFT {nft_name}", item_type="NFT", price_display=nft_name)
-    await show_currency_selection(callback.message, f"NFT {nft_name}", edit=True)
+    nft_data = callback.data.replace("nftitem_", "")
+    try:
+        price_uah = int(nft_data.split("(")[1].replace(" грн)", "").strip())
+    except Exception:
+        price_uah = 400
+        
+    await state.update_data(chosen_item=f"NFT {nft_data}", item_type="NFT", nft_price=price_uah)
+    await show_currency_selection(callback.message, f"NFT {nft_data}", item_type="NFT", edit=True)
     await callback.answer()
 
 # --- ВЫБОР STARS/GOLD ---
@@ -288,7 +324,7 @@ async def process_item_choice(callback: types.CallbackQuery, state: FSMContext):
     amount = int(value)
     item_name = f"{amount} {item_type}"
     await state.update_data(chosen_item=item_name, item_type=item_type, item_amount=amount)
-    await show_currency_selection(callback.message, item_name, edit=True)
+    await show_currency_selection(callback.message, item_name, item_type=item_type, edit=True)
     await callback.answer()
 
 @dp.message(OrderState.waiting_for_custom_amount)
@@ -304,16 +340,20 @@ async def process_custom_amount(message: types.Message, state: FSMContext):
     amount = int(amount_text)
     item_name = f"{amount} {item_type}"
     await state.update_data(chosen_item=item_name, item_type=item_type, item_amount=amount)
-    await show_currency_selection(message, item_name, edit=False)
+    await show_currency_selection(message, item_name, item_type=item_type, edit=False)
 
-async def show_currency_selection(message: types.Message, item_name: str, edit: bool = False):
-    kb = InlineKeyboardMarkup(inline_keyboard=[
+async def show_currency_selection(message: types.Message, item_name: str, item_type: str, edit: bool = False):
+    currency_buttons = [
         [InlineKeyboardButton(text="🇵🇱 PLN (Blik / Card)", callback_data="pay_PLN")],
         [InlineKeyboardButton(text="🇺🇦 UAH (Гривны ПУМБ)", callback_data="pay_UAH")],
-        [InlineKeyboardButton(text="💎 Crypto (USDT / TON)", callback_data="pay_Crypto")],
-        [InlineKeyboardButton(text="🌟 Telegram Stars", callback_data="pay_Stars")],
+        [InlineKeyboardButton(text="💎 Crypto (GRAM)", callback_data="pay_Crypto")],
         [InlineKeyboardButton(text="💵 USD / 💶 EUR", callback_data="pay_USD_EUR")]
-    ])
+    ]
+    
+    if item_type == "Gold":
+        currency_buttons.insert(2, [InlineKeyboardButton(text="🌟 Telegram Stars", callback_data="pay_Stars")])
+
+    kb = InlineKeyboardMarkup(inline_keyboard=currency_buttons)
     text = f"💳 <b>Вы выбрали:</b> {item_name}\n\nВыберите удобную валюту для оплаты:"
     if edit:
         await message.edit_text(text, reply_markup=kb, parse_mode="HTML")
@@ -335,7 +375,8 @@ async def process_currency_choice(callback: types.CallbackQuery, state: FSMConte
     elif item_type == "Gold":
         price_str = f"К оплате: <b>{calculate_gold_price(amount, currency)}</b>"
     elif item_type == "NFT":
-        price_str = f"К оплате: <b>{data.get('price_display', item_name)}</b>"
+        nft_price_uah = data.get("nft_price", 400)
+        price_str = f"К оплате: <b>{calculate_nft_price(nft_price_uah, currency)}</b>"
     else:
         price_str = ""
 
@@ -346,6 +387,10 @@ async def process_currency_choice(callback: types.CallbackQuery, state: FSMConte
         card_info = f"<code>{CARD_PUMB}</code>\n\n💬 Bank: <b>ПУМБ (Украина)</b>"
     elif "PLN" in currency:
         card_info = f"<code>{CARD_PLN}</code>\n\n💬 Card / Blik (Польша)"
+    elif "Crypto" in currency or "GRAM" in currency:
+        card_info = f"💎 <b>Оплата криптовалютой GRAM</b>\nПеревод отправляйте на юзернейм: <code>{SUPPORT_USERNAME}</code>"
+    elif "Stars" in currency:
+        card_info = f"Оплата спишется с вашего внутреннего баланса Stars в боте."
     else:
         card_info = f"Для получения реквизитов напишите оператору: {SUPPORT_USERNAME}"
         
@@ -425,7 +470,7 @@ async def admin_decision(callback: types.CallbackQuery):
         await callback.message.edit_caption(caption=callback.message.caption + "\n\n✅ <b>Оплата одобрена! Средства/NFT зачислены.</b>", parse_mode="HTML")
         await bot.send_message(target_user_id, "🎉 Ваша оплата подтверждена! Товар зачислен в ваш профиль.")
     else:
-        await callback.message.edit_caption(caption=callback.message.caption + "\n\n❌ <b>Оплата отклонена.</b>", parse_mode="HTML")
+        await callback.message.edit_caption(caption=caption + "\n\n❌ <b>Оплата отклонена.</b>", parse_mode="HTML")
         await bot.send_message(target_user_id, f"❌ Оплата отклонена. Свяжитесь с поддержкой: {SUPPORT_USERNAME}")
         
     await callback.answer()
