@@ -2,6 +2,8 @@ import asyncio
 import logging
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import CommandStart
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (
     InlineKeyboardButton, 
     InlineKeyboardMarkup, 
@@ -10,6 +12,7 @@ from aiogram.types import (
 )
 
 BOT_TOKEN = "8684030373:AAH3SBGRKk41DSydEJG1H8t05SX-N_uPrmw"
+ADMIN_ID = 7706483533  # Твой Telegram ID для получения чеков и заявок на вывод
 
 CHANNELS = [
     {"name": "Основной канал", "url": "https://t.me/monolit_main", "chat_id": "@monolit_main"},
@@ -19,6 +22,31 @@ CHANNELS = [
 
 SUPPORT_USERNAME = "@monolit_hq"
 
+# База данных в памяти (для примера; в будущем можно подключить SQLite/Postgres)
+# user_db[user_id] = {"balance_stars": 0, "balance_gold": 0, "nft_inventory": [], "refs": 0}
+user_db = {}
+user_languages = {}
+
+# Состояния FSM
+class OrderState(StatesGroup):
+    waiting_for_custom_amount = State()
+    waiting_for_payment_proof = State()
+    waiting_for_withdraw_amount = State()
+
+bot = Bot(token=BOT_TOKEN)
+dp = Dispatcher()
+
+def get_user(user_id: int):
+    if user_id not in user_db:
+        user_db[user_id] = {
+            "balance_stars": 0,
+            "balance_gold": 0,
+            "nft_inventory": ["Telegram Username @monolit_Vip", "Gift NFT #777"], # Пример инвентаря
+            "refs": 0
+        }
+    return user_db[user_id]
+
+# Тексты локализаций
 TEXTS = {
     "ru": {
         "sub_title": "<b>MONOLIT</b>\n\nДля доступа к сервису, пожалуйста, подпишитесь на наши каналы:",
@@ -29,69 +57,49 @@ TEXTS = {
         "btn_gold": "🥇 Купить Gold (Standoff 2)",
         "btn_nft": "🖼 Купить NFT",
         "btn_ref": "🎁 Рефералка",
+        "btn_profile": "👤 Профиль",
         "btn_other": "🎮 Другие игры",
         "other_msg": f"🎮 По всем вопросам и заказу для других игр обращайтесь в ЛС: {SUPPORT_USERNAME}",
-        "ref_msg": f"🎁 <b>Реферальная программа MONOLIT</b>\n\nПригласи 10 друзей и получи подарок <b>«Мишка» (15⭐)</b>!\n\nДля подтверждения инвайтов и получения подарка пишите в поддержку: {SUPPORT_USERNAME}",
-        "select_item_stars": "🌟 <b>Выберите количество Telegram Stars:</b>",
-        "select_item_gold": "🥇 <b>Выберите количество Gold (Standoff 2):</b>",
-        "select_item_nft": "🖼 <b>Выберите категорию NFT:</b>",
-        "select_currency": "💳 <b>Вы выбрали:</b> {item}\n\nТеперь выберите удобную валюту для оплаты:",
-        "pay_final": "✅ <b>Заявка оформлена!</b>\n\n<b>Товар:</b> {item}\n<b>Валюта:</b> {currency}\n\nДля завершения оплаты и получения товара нажмите кнопку ниже:",
-        "btn_pay_manager": "👨‍💻 Оплатить через менеджер",
-        "btn_back": "⬅️ Назад"
-    },
-    "ua": {
-        "sub_title": "<b>MONOLIT</b>\n\nДля доступу до сервісу, будь ласка, підпишіться на наші канали:",
-        "btn_check": "Я підписався ✅",
-        "sub_not_ok": "❌ Ви підписалися не на всі канали. Перевірте підписку та натисніть кнопку знову!",
-        "menu_welcome": "⚡️ <b>Ласкаво просимо до MONOLIT!</b>\nОберіть потрібний розділ у меню нижче:",
-        "btn_stars": "🌟 Купити Stars",
-        "btn_gold": "🥇 Купити Gold (Standoff 2)",
-        "btn_nft": "🖼 Купити NFT",
-        "btn_ref": "🎁 Рефералка",
-        "btn_other": "🎮 Інші ігри",
-        "other_msg": f"🎮 З усіх питань та щодо замовлень для інших ігор звертайтесь у ЛС: {SUPPORT_USERNAME}",
-        "ref_msg": f"🎁 <b>Реферальна програма MONOLIT</b>\n\nЗапроси 10 друзів та отримай подарунок <b>«Ведмедик» (15⭐)</b>!\n\nДля підтвердження інвайтів та отримання подарунка пишіть у підтримку: {SUPPORT_USERNAME}",
-        "select_item_stars": "🌟 <b>Оберіть кількість Telegram Stars:</b>",
-        "select_item_gold": "🥇 <b>Оберіть кількість Gold (Standoff 2):</b>",
-        "select_item_nft": "🖼 <b>Оберіть категорію NFT:</b>",
-        "select_currency": "💳 <b>Ви обрали:</b> {item}\n\nТепер оберіть зручну валюту для оплати:",
-        "pay_final": "✅ <b>Заявку сформовано!</b>\n\n<b>Товар:</b> {item}\n<b>Валюта:</b> {currency}\n\nДля завершення оплати та отримання товару натисніть кнопку нижче:",
-        "btn_pay_manager": "👨‍💻 Оплатити через менеджера",
-        "btn_back": "⬅️ Назад"
-    },
-    "en": {
-        "sub_title": "<b>MONOLIT</b>\n\nTo access the service, please subscribe to our channels:",
-        "btn_check": "I subscribed ✅",
-        "sub_not_ok": "❌ You are not subscribed to all channels. Please check and try again!",
-        "menu_welcome": "⚡️ <b>Welcome to MONOLIT!</b>\nSelect a section from the menu below:",
-        "btn_stars": "🌟 Buy Stars",
-        "btn_gold": "🥇 Buy Gold (Standoff 2)",
-        "btn_nft": "🖼 Buy NFT",
-        "btn_ref": "🎁 Referral",
-        "btn_other": "🎮 Other Games",
-        "other_msg": f"🎮 For any questions regarding other games, contact support: {SUPPORT_USERNAME}",
-        "ref_msg": f"🎁 <b>MONOLIT Referral Program</b>\n\nInvite 10 friends and receive a <b>«Mishka» gift (15⭐)</b>!\n\nTo claim your gift, contact support: {SUPPORT_USERNAME}",
-        "select_item_stars": "🌟 <b>Select Telegram Stars package:</b>",
-        "select_item_gold": "🥇 <b>Select Gold amount (Standoff 2):</b>",
-        "select_item_nft": "🖼 <b>Select NFT category:</b>",
-        "select_currency": "💳 <b>You selected:</b> {item}\n\nNow select your payment currency:",
-        "pay_final": "✅ <b>Order Created!</b>\n\n<b>Item:</b> {item}\n<b>Currency:</b> {currency}\n\nTo complete payment, click the button below:",
-        "btn_pay_manager": "👨‍💻 Pay via Manager",
-        "btn_back": "⬅️ Back"
+        "ref_msg": (
+            "🎁 <b>Реферальная программа MONOLIT</b>\n\n"
+            "1️⃣ Пригласи 10 активных друзей в бота.\n"
+            "2️⃣ Напиши в чат канала @monolit_main сообщение вида:\n"
+            "<code>пригласил @юз_кого_пригласил</code>\n"
+            "3️⃣ За 7 приглашений получаешь подарок <b>«Мишка»</b>!\n\n"
+            "⚠️ <i>Фейковые и неактивные аккаунты не учитываются!</i>\n"
+            f"👥 Ваши приглашенные рефералы: <b>{{refs}}</b>"
+        ),
+        "profile_text": (
+            "👤 <b>Ваш профиль MONOLIT</b>\n\n"
+            "🆔 ID: <code>{user_id}</code>\n"
+            "🌟 Баланс Stars: <b>{stars} ⭐</b>\n"
+            "🥇 Баланс Gold: <b>{gold} 🥇</b>\n"
+            "🖼 NFT в инвентаре: <b>{nft_count} шт.</b>\n"
+            "🎁 Приглашено друзей: <b>{refs}</b>"
+        ),
+        "btn_withdraw": "📤 Вывести",
+        "btn_top_up": "💳 Пополнить баланс",
+        "select_custom": "⌨️ Введите нужное количество (числом) в ответном сообщении:",
+        "ask_currency": "💳 <b>Вы выбрали:</b> {item}\n\nВыберите удобную валюту для оплаты:",
+        "send_proof": (
+            "📤 <b>Оплата заказа</b>\n\n"
+            "Товар: <b>{item}</b>\n"
+            "Валюта: <b>{currency}</b>\n\n"
+            "Переведите средства и отправьте сюда <b>чек/квитанцию</b> (фото или PDF-файл).\n"
+            "⏳ После отправки начнется модерация оплаты."
+        ),
+        "proof_sent": "✅ <b>Чек отправлен на модерацию!</b>\nАдминистратор скоро проверит платеж, и средства/товар поступят на ваш баланс.",
+        "withdraw_menu": "📤 <b>Что именно вы хотите вывести из баланса?</b>",
+        "withdraw_prompt_amount": "🔢 Введите количество для вывода ({item}):",
+        "withdraw_select_nft": "🖼 Выберите NFT из вашего инвентаря для вывода:",
+        "withdraw_success_sent": "⏳ <b>Заявка на вывод принята!</b>\nВывод обычно занимает от 15 минут до 2 часов.",
     }
 }
 
-user_languages = {}
-# Временное хранение выборов пользователей
-user_orders = {}
-
-bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher()
-
-# --- СТАРТ И ЯЗЫК ---
+# --- СТАРТ И ПОДПИСКА ---
 @dp.message(CommandStart())
-async def cmd_start(message: types.Message):
+async def cmd_start(message: types.Message, state: FSMContext):
+    await state.clear()
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🇷🇺 Русский", callback_data="lang_ru")],
         [InlineKeyboardButton(text="🇺🇦 Українська", callback_data="lang_ua")],
@@ -100,7 +108,7 @@ async def cmd_start(message: types.Message):
     await message.answer("<b>Выберите язык / Оберіть мову / Choose language:</b>", reply_markup=kb, parse_mode="HTML")
 
 @dp.callback_query(F.data.startswith("lang_"))
-async def process_language(callback: types.CallbackQuery):
+async def process_language(callback: types.CallbackQuery, state: FSMContext):
     lang = callback.data.split("_")[1]
     user_languages[callback.from_user.id] = lang
     await callback.message.delete()
@@ -116,7 +124,7 @@ async def send_subscription_check(user_id: int, lang: str):
     await bot.send_message(user_id, t["sub_title"], reply_markup=kb, parse_mode="HTML")
 
 @dp.callback_query(F.data == "check_sub")
-async def check_subscription(callback: types.CallbackQuery):
+async def check_subscription(callback: types.CallbackQuery, state: FSMContext):
     user_id = callback.from_user.id
     lang = user_languages.get(user_id, "ru")
     t = TEXTS.get(lang, TEXTS["ru"])
@@ -143,63 +151,102 @@ async def send_main_menu(user_id: int, lang: str):
     kb = ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text=t["btn_stars"]), KeyboardButton(text=t["btn_gold"])],
-            [KeyboardButton(text=t["btn_nft"]), KeyboardButton(text=t["btn_ref"])],
-            [KeyboardButton(text=t["btn_other"])]
+            [KeyboardButton(text=t["btn_nft"]), KeyboardButton(text=t["btn_profile"])],
+            [KeyboardButton(text=t["btn_ref"]), KeyboardButton(text=t["btn_other"])]
         ],
         resize_keyboard=True
     )
     await bot.send_message(user_id, t["menu_welcome"], reply_markup=kb, parse_mode="HTML")
 
-# --- ВЫБОР ТОВАРОВ ---
-@dp.message()
-async def handle_menu_click(message: types.Message):
+# --- КНОПКИ ГЛАВНОГО МЕНЮ ---
+@dp.message(F.text.in_(["👤 Профиль", "👤 Профіль", "👤 Profile"]))
+async def show_profile(message: types.Message):
     user_id = message.from_user.id
-    lang = user_languages.get(user_id, "ru")
-    t = TEXTS.get(lang, TEXTS["ru"])
-    text = message.text
+    u = get_user(user_id)
+    t = TEXTS["ru"]
+    
+    text = t["profile_text"].format(
+        user_id=user_id,
+        stars=u["balance_stars"],
+        gold=u["balance_gold"],
+        nft_count=len(u["nft_inventory"]),
+        refs=u["refs"]
+    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📤 Вывести", callback_data="menu_withdraw")]
+    ])
+    await message.answer(text, reply_markup=kb, parse_mode="HTML")
 
-    if text in [TEXTS["ru"]["btn_other"], TEXTS["ua"]["btn_other"], TEXTS["en"]["btn_other"]]:
-        await message.answer(t["other_msg"])
+@dp.message(F.text.in_(["🎁 Рефералка", "🎁 Реферальна програма", "🎁 Referral"]))
+async def show_ref(message: types.Message):
+    user_id = message.from_user.id
+    u = get_user(user_id)
+    t = TEXTS["ru"]
+    await message.answer(t["ref_msg"].format(refs=u["refs"]), parse_mode="HTML")
+
+@dp.message(F.text.in_(["🎮 Другие игры", "🎮 Інші ігри", "🎮 Other Games"]))
+async def show_other(message: types.Message):
+    await message.answer(TEXTS["ru"]["other_msg"])
+
+# --- ПОКУПКА (ВЫБОР ТОВАРА И КАСТОМНОЕ КОЛИЧЕСТВО) ---
+@dp.message(F.text.in_(["🌟 Купить Stars", "🌟 Купити Stars", "🌟 Buy Stars"]))
+async def buy_stars(message: types.Message, state: FSMContext):
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="50 ⭐", callback_data="item_Stars_50"), InlineKeyboardButton(text="100 ⭐", callback_data="item_Stars_100")],
+        [InlineKeyboardButton(text="250 ⭐", callback_data="item_Stars_250"), InlineKeyboardButton(text="500 ⭐", callback_data="item_Stars_500")],
+        [InlineKeyboardButton(text="✏️ Свое количество", callback_data="item_Stars_custom")]
+    ])
+    await message.answer("🌟 <b>Выберите пакет Telegram Stars или укажите свое количество:</b>", reply_markup=kb, parse_mode="HTML")
+
+@dp.message(F.text.in_(["🥇 Купить Gold (Standoff 2)", "🥇 Купити Gold (Standoff 2)", "🥇 Buy Gold (Standoff 2)"]))
+async def buy_gold(message: types.Message, state: FSMContext):
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="100 🥇", callback_data="item_Gold_100"), InlineKeyboardButton(text="500 🥇", callback_data="item_Gold_500")],
+        [InlineKeyboardButton(text="1000 🥇", callback_data="item_Gold_1000"), InlineKeyboardButton(text="3000 🥇", callback_data="item_Gold_3000")],
+        [InlineKeyboardButton(text="✏️ Свое количество", callback_data="item_Gold_custom")]
+    ])
+    await message.answer("🥇 <b>Выберите количество Gold или укажите свое:</b>", reply_markup=kb, parse_mode="HTML")
+
+@dp.message(F.text.in_(["🖼 Купить NFT", "🖼 Купити NFT", "🖼 Buy NFT"]))
+async def buy_nft(message: types.Message, state: FSMContext):
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🖼 Telegram Usernames", callback_data="item_NFT_Usernames")],
+        [InlineKeyboardButton(text="🖼 Telegram Numbers (+888)", callback_data="item_NFT_Numbers")],
+        [InlineKeyboardButton(text="🎁 Telegram Gifts", callback_data="item_NFT_Gifts")]
+    ])
+    await message.answer("🖼 <b>Выберите категорию NFT для покупки:</b>", reply_markup=kb, parse_mode="HTML")
+
+# --- ОБРАБОТКА ВЫБОРА ТОВАРА ИЛИ КАСТОМА ---
+@dp.callback_query(F.data.startswith("item_"))
+async def process_item_choice(callback: types.CallbackQuery, state: FSMContext):
+    data_parts = callback.data.split("_")
+    item_type = data_parts[1] # Stars, Gold, NFT
+    value = data_parts[2] # число или custom / Usernames и т.д.
+    
+    if value == "custom":
+        await state.update_data(item_type=item_type)
+        await state.set_state(OrderState.waiting_for_custom_amount)
+        await callback.message.answer(TEXTS["ru"]["select_custom"])
+        await callback.answer()
+        return
         
-    elif text in [TEXTS["ru"]["btn_ref"], TEXTS["ua"]["btn_ref"], TEXTS["en"]["btn_ref"]]:
-        await message.answer(t["ref_msg"], parse_mode="HTML")
+    item_name = f"{value} {item_type}"
+    await state.update_data(chosen_item=item_name)
+    await show_currency_selection(callback.message, item_name, edit=True)
+    await callback.answer()
 
-    # ВЫБОР STARS
-    elif text in [TEXTS["ru"]["btn_stars"], TEXTS["ua"]["btn_stars"], TEXTS["en"]["btn_stars"]]:
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="50 ⭐", callback_data="buy_50_Stars"), InlineKeyboardButton(text="100 ⭐", callback_data="buy_100_Stars")],
-            [InlineKeyboardButton(text="250 ⭐", callback_data="buy_250_Stars"), InlineKeyboardButton(text="500 ⭐", callback_data="buy_500_Stars")],
-            [InlineKeyboardButton(text="1000 ⭐", callback_data="buy_1000_Stars")]
-        ])
-        await message.answer(t["select_item_stars"], reply_markup=kb, parse_mode="HTML")
-
-    # ВЫБОР GOLD
-    elif text in [TEXTS["ru"]["btn_gold"], TEXTS["ua"]["btn_gold"], TEXTS["en"]["btn_gold"]]:
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="100 🥇 Gold", callback_data="buy_100_Gold"), InlineKeyboardButton(text="500 🥇 Gold", callback_data="buy_500_Gold")],
-            [InlineKeyboardButton(text="1000 🥇 Gold", callback_data="buy_1000_Gold"), InlineKeyboardButton(text="3000 🥇 Gold", callback_data="buy_3000_Gold")]
-        ])
-        await message.answer(t["select_item_gold"], reply_markup=kb, parse_mode="HTML")
-
-    # ВЫБОР NFT
-    elif text in [TEXTS["ru"]["btn_nft"], TEXTS["ua"]["btn_nft"], TEXTS["en"]["btn_nft"]]:
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🖼 Telegram Usernames", callback_data="buy_NFT_Usernames")],
-            [InlineKeyboardButton(text="🖼 Telegram Numbers (+888)", callback_data="buy_NFT_Numbers")],
-            [InlineKeyboardButton(text="🖼 Gifts NFT", callback_data="buy_NFT_Gifts")]
-        ])
-        await message.answer(t["select_item_nft"], reply_markup=kb, parse_mode="HTML")
-
-# --- ВЫБОР ВАЛЮТЫ ---
-@dp.callback_query(F.data.startswith("buy_"))
-async def process_item_select(callback: types.CallbackQuery):
-    user_id = callback.from_user.id
-    lang = user_languages.get(user_id, "ru")
-    t = TEXTS.get(lang, TEXTS["ru"])
+@dp.message(OrderState.waiting_for_custom_amount)
+async def process_custom_amount(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    item_type = data.get("item_type", "Item")
+    amount = message.text.strip()
+    item_name = f"{amount} {item_type}"
     
-    item = callback.data.replace("buy_", "").replace("_", " ")
-    user_orders[user_id] = {"item": item}
-    
+    await state.update_data(chosen_item=item_name)
+    await show_currency_selection(message, item_name, edit=False)
+    await state.set_state(None)
+
+async def show_currency_selection(message: types.Message, item_name: str, edit: bool = False):
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🇵🇱 PLN (Blik / Card)", callback_data="pay_PLN")],
         [InlineKeyboardButton(text="🇺🇦 UAH (Гривны)", callback_data="pay_UAH")],
@@ -207,35 +254,185 @@ async def process_item_select(callback: types.CallbackQuery):
         [InlineKeyboardButton(text="🌟 Telegram Stars", callback_data="pay_Stars")],
         [InlineKeyboardButton(text="💵 USD / 💶 EUR", callback_data="pay_USD_EUR")]
     ])
-    
-    await callback.message.edit_text(t["select_currency"].format(item=item), reply_markup=kb, parse_mode="HTML")
+    text = TEXTS["ru"]["ask_currency"].format(item=item_name)
+    if edit:
+        await message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    else:
+        await message.answer(text, reply_markup=kb, parse_mode="HTML")
 
-# --- ИТОГОВЫЙ ЭКРАН ОПЛАТЫ ---
+# --- ВЫБОР ВАЛЮТЫ И ЗАПРОС ЧЕКА ---
 @dp.callback_query(F.data.startswith("pay_"))
-async def process_currency_select(callback: types.CallbackQuery):
-    user_id = callback.from_user.id
-    lang = user_languages.get(user_id, "ru")
-    t = TEXTS.get(lang, TEXTS["ru"])
-    
+async def process_currency_choice(callback: types.CallbackQuery, state: FSMContext):
     currency = callback.data.replace("pay_", "").replace("_", "/")
-    order = user_orders.get(user_id, {"item": "Товар"})
-    item = order["item"]
+    await state.update_data(chosen_currency=currency)
     
-    manager_url = f"https://t.me/{SUPPORT_USERNAME.replace('@', '')}?text=Привет!_Хочу_купить_{item}_за_{currency}"
+    data = await state.get_data()
+    item = data.get("chosen_item", "Товар")
     
+    await state.set_state(OrderState.waiting_for_payment_proof)
+    text = TEXTS["ru"]["send_proof"].format(item=item, currency=currency)
+    await callback.message.edit_text(text, parse_mode="HTML")
+    await callback.answer()
+
+# --- ПОЛУЧЕНИЕ ЧЕКА ОТ ПОЛЬЗОВАТЕЛЯ И ПЕРЕСЫЛКА АДМИНУ ---
+@dp.message(OrderState.waiting_for_payment_proof, F.photo | F.document)
+async def receive_payment_proof(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    item = data.get("chosen_item", "Товар")
+    currency = data.get("chosen_currency", "Валюта")
+    user = message.from_user
+    
+    # Кнопки для админа: принять / отклонить
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=t["btn_pay_manager"], url=manager_url)]
+        [
+            InlineKeyboardButton(text="✅ Принять (Начислить)", callback_data=f"adm_accept_{user.id}"),
+            InlineKeyboardButton(text="❌ Отклонить", callback_data=f"adm_reject_{user.id}")
+        ]
     ])
     
-    await callback.message.edit_text(
-        t["pay_final"].format(item=item, currency=currency),
-        reply_markup=kb,
-        parse_mode="HTML"
+    admin_caption = (
+        f"📥 <b>Новая оплата на модерацию!</b>\n\n"
+        f"👤 Пользователь: @{user.username} (ID: <code>{user.id}</code>)\n"
+        f"📦 Товар: <b>{item}</b>\n"
+        f"💳 Валюта: <b>{currency}</b>"
     )
+    
+    # Пересылаем чек админу
+    if message.photo:
+        await bot.send_photo(chat_id=ADMIN_ID, photo=message.photo[-1].file_id, caption=admin_caption, reply_markup=kb, parse_mode="HTML")
+    elif message.document:
+        await bot.send_document(chat_id=ADMIN_ID, document=message.document.file_id, caption=admin_caption, reply_markup=kb, parse_mode="HTML")
+        
+    await message.answer(TEXTS["ru"]["proof_sent"], parse_mode="HTML")
+    await state.clear()
 
+# --- ДЕЙСТВИЯ АДМИНА ПО ОПЛАТЕ ---
+@dp.callback_query(F.data.startswith("adm_accept_") | F.data.startswith("adm_reject_"))
+async def admin_decision(callback: types.CallbackQuery):
+    if callback.from_user.id != ADMIN_ID:
+        await callback.answer("У вас нет прав!", show_alert=True)
+        return
+        
+    parts = callback.data.split("_")
+    action = parts[1] # accept или reject
+    target_user_id = int(parts[2])
+    
+    if action == "accept":
+        # Начисляем на условный баланс (если это звезды или голда)
+        u = get_user(target_user_id)
+        u["balance_stars"] += 100 # Пример начисления (можно настроить автоматику по тексту)
+        
+        await callback.message.edit_caption(caption=callback.message.caption + "\n\n✅ <b>Оплата одобрена и начислена!</b>", parse_mode="HTML")
+        await bot.send_message(target_user_id, "✅ Ваша оплата прошла модерацию! Товар/средства зачислены на ваш баланс в профиле.")
+    else:
+        await callback.message.edit_caption(caption=callback.message.caption + "\n\n❌ <b>Оплата отклонена.</b>", parse_mode="HTML")
+        await bot.send_message(target_user_id, "❌ К сожалению, ваша оплата была отклонена администратором. Обратитесь в поддержку: " + SUPPORT_USERNAME)
+        
+    await callback.answer()
+
+# --- МЕНЮ ВЫВОДА ИЗ ПРОФИЛЯ ---
+@dp.callback_query(F.data == "menu_withdraw")
+async def menu_withdraw_handler(callback: types.CallbackQuery):
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🌟 Telegram Stars", callback_data="wd_type_Stars")],
+        [InlineKeyboardButton(text="🥇 Gold (Standoff 2)", callback_data="wd_type_Gold")],
+        [InlineKeyboardButton(text="🖼 NFT из инвентаря", callback_data="wd_type_NFT")]
+    ])
+    await callback.message.edit_text(TEXTS["ru"]["withdraw_menu"], reply_markup=kb, parse_mode="HTML")
+
+@dp.callback_query(F.data.startswith("wd_type_"))
+async def withdraw_type_chosen(callback: types.CallbackQuery, state: FSMContext):
+    wd_type = callback.data.replace("wd_type_", "")
+    user_id = callback.from_user.id
+    u = get_user(user_id)
+    
+    if wd_type == "NFT":
+        if not u["nft_inventory"]:
+            await callback.answer("У вас нет NFT в инвентаре!", show_alert=True)
+            return
+        # Показываем список инвентаря для вывода
+        buttons = []
+        for nft in u["nft_inventory"]:
+            buttons.append([InlineKeyboardButton(text=f"🖼 {nft}", callback_data=f"wd_nft_{nft}")])
+        kb = InlineKeyboardMarkup(inline_keyboard=buttons)
+        await callback.message.edit_text(TEXTS["ru"]["withdraw_select_nft"], reply_markup=kb, parse_mode="HTML")
+    else:
+        await state.update_data(withdraw_type=wd_type)
+        await state.set_state(OrderState.waiting_for_withdraw_amount)
+        await callback.message.edit_text(TEXTS["ru"]["withdraw_prompt_amount"].format(item=wd_type), parse_mode="HTML")
+        
+    await callback.answer()
+
+@dp.message(OrderState.waiting_for_withdraw_amount)
+async def process_withdraw_amount(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    wd_type = data.get("withdraw_type", "Stars")
+    amount = message.text.strip()
+    user = message.from_user
+    
+    # Отправляем заявку админу
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Выведено", callback_data=f"wd_done_{user.id}"),
+            InlineKeyboardButton(text="❌ Отклонено", callback_data=f"wd_rej_{user.id}")
+        ]
+    ])
+    
+    admin_text = (
+        f"📤 <b>Заявка на вывод средств!</b>\n\n"
+        f"👤 Пользователь: @{user.username} (ID: <code>{user.id}</code>)\n"
+        f"📦 Что выводит: <b>{amount} {wd_type}</b>"
+    )
+    
+    await bot.send_message(chat_id=ADMIN_ID, text=admin_text, reply_markup=kb, parse_mode="HTML")
+    await message.answer(TEXTS["ru"]["withdraw_success_sent"], parse_mode="HTML")
+    await state.clear()
+
+@dp.callback_query(F.data.startswith("wd_nft_"))
+async def process_withdraw_nft(callback: types.CallbackQuery):
+    nft_name = callback.data.replace("wd_nft_", "")
+    user = callback.from_user
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Выведено", callback_data=f"wd_done_{user.id}"),
+            InlineKeyboardButton(text="❌ Отклонено", callback_data=f"wd_rej_{user.id}")
+        ]
+    ])
+    
+    admin_text = (
+        f"📤 <b>Заявка на вывод NFT!</b>\n\n"
+        f"👤 Пользователь: @{user.username} (ID: <code>{user.id}</code>)\n"
+        f"🖼 NFT: <b>{nft_name}</b>"
+    )
+    
+    await bot.send_message(chat_id=ADMIN_ID, text=admin_text, reply_markup=kb, parse_mode="HTML")
+    await callback.message.edit_text(TEXTS["ru"]["withdraw_success_sent"], parse_mode="HTML")
+    await callback.answer()
+
+@dp.callback_query(F.data.startswith("wd_done_") | F.data.startswith("wd_rej_"))
+async def admin_withdraw_decision(callback: types.CallbackQuery):
+    if callback.from_user.id != ADMIN_ID:
+        await callback.answer("У вас нет прав!", show_alert=True)
+        return
+        
+    parts = callback.data.split("_")
+    action = parts[1] # done или rej
+    target_user_id = int(parts[2])
+    
+    if action == "done":
+        await callback.message.edit_text(callback.message.text + "\n\n✅ <b>Вывод успешно выполнен!</b>", parse_mode="HTML")
+        await bot.send_message(target_user_id, "🎉 Ваш заказ/вывод успешно выполнен администратором!")
+    else:
+        await callback.message.edit_text(callback.message.text + "\n\n❌ <b>Вывод отклонен.</b>", parse_mode="HTML")
+        await bot.send_message(target_user_id, "❌ Заявка на вывод была отклонена. Обратитесь в поддержку: " + SUPPORT_USERNAME)
+        
+    await callback.answer()
+
+# --- ЗАПУСК ---
 async def main():
     logging.basicConfig(level=logging.INFO)
-    print("MONOLIT Bot is running...")
+    print("MONOLIT Bot (Advanced) is running...")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
